@@ -1,2 +1,3 @@
 /.venv
-/nodemap.bson
+nodemap.bson
+.comet.config
