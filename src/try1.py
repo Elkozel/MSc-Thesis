@@ -1,7 +1,7 @@
 from pytorch_lightning.loggers import CometLogger
 
 import lightning as L
-from models.lit_Try1 import FullModel
+from models.Try1 import LitFullModel
 from utils.window_dataloader import MovingWindowDataloader
 from elasticsearch import Elasticsearch
 from utils.elastic_datafetcher import LANLGraphFetcher
@@ -56,17 +56,8 @@ valid_data = LANLGraphFetcher(es, ("lanl-auth", "lanl-redteam"),
 test_data = LANLGraphFetcher(es, ("lanl-auth", "lanl-redteam"),
                       hyper_params["test_from"], hyper_params["test_to"], prefetch=True, seconds_bin=hyper_params["seconds_bin"])
 
-model = FullModel(hyper_params["in_channels"], hyper_params["hidden_channels"])
+model = LitFullModel(hyper_params["in_channels"], hyper_params["hidden_channels"])
 
-old_list = 
-for s in MovingWindowDataloader(train_data, hyper_params["window_size"]):
-    x,y = s
-    for xs in x:
-        print(xs)
-
-    print("")
-
-
-# trainer = L.Trainer(max_epochs=10, logger=comet_logger)
-# trainer.fit(model=model, train_dataloaders=MovingWindowDataloader(train_data, hyper_params["window_size"]),
-#               val_dataloaders=MovingWindowDataloader(valid_data, hyper_params["window_size"]))
+trainer = L.Trainer(max_epochs=10, logger=comet_logger)
+trainer.fit(model=model, train_dataloaders=MovingWindowDataloader(train_data, hyper_params["window_size"]),
+              val_dataloaders=MovingWindowDataloader(valid_data, hyper_params["window_size"]))

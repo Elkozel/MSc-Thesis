@@ -1,8 +1,12 @@
 import torch
+import torchmetrics
 import torch.nn as nn
 import lightning as L
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv
+from torch_geometric.utils import negative_sampling
+import torchmetrics.classification
+
 
 class GNNEncoder(nn.Module):
     def __init__(self, in_channels, hidden_channels):
@@ -32,13 +36,19 @@ class RNNEncoder(nn.Module):
 class DotProductDecoder(nn.Module):
     def forward(self, z_src, z_dst):
         return (z_src * z_dst).sum(dim=1)
-    
-class FullModel(nn.Module):
-    def __init__(self, in_channels, hidden_channels):
+
+class LitFullModel(L.LightningModule):
+    def __init__(self, in_channels, hidden_channels, ):
         super().__init__()
+        self.save_hyperparameters()
         self.gnn = GNNEncoder(in_channels, hidden_channels)
         self.rnn = RNNEncoder(hidden_channels)
         self.decoder = DotProductDecoder()
+
+        # define metrics
+        self.train_acc = torchmetrics.classification.BinaryAccuracy(threshold=0.5)  
+        self.val_acc   = torchmetrics.classification.BinaryAccuracy(threshold=0.5)
+
 
     def forward(self, graph_sequence, edge_pairs):
         # Generate the features at each timestamp
@@ -62,3 +72,64 @@ class FullModel(nn.Module):
 
         return scores
 
+    def training_step(self, batch, batch_idx):
+        """Trains the model on one batch of temporal graphs."""
+        x_graphs, y_graph = batch
+
+        # Positive and negative edge sampling
+        positive_edges = y_graph.edge_index
+        negative_edges = negative_sampling(
+            edge_index=y_graph.edge_index,
+            num_nodes=y_graph.num_nodes,
+            num_neg_samples=positive_edges.size(1)
+        )
+
+        edge_pairs = torch.cat([positive_edges, negative_edges], dim=1)
+        labels = torch.cat([
+            torch.ones(positive_edges.size(1)),
+            torch.zeros(negative_edges.size(1))
+        ])
+
+        # Grab scores and calculate metrics
+        scores = self(x_graphs, edge_pairs)
+        loss = F.binary_cross_entropy_with_logits(scores, labels.float())
+        acc = self.train_acc(scores, labels.int())
+
+        # Logging
+        self.log("train_loss", loss, on_epoch=True)
+        self.log("train_acc", acc, prog_bar=True, on_epoch=True)
+
+        return loss
+    
+    def validation_step(self, batch, batch_idx):
+        """Validates the model on one batch of temporal graphs."""
+        x_graphs, y_graph = batch
+
+        # Positive and negative edge sampling
+        positive_edges = y_graph.edge_index
+        negative_edges = negative_sampling(
+            edge_index=y_graph.edge_index,
+            num_nodes=y_graph.num_nodes,
+            num_neg_samples=positive_edges.size(1)
+        )
+
+        edge_pairs = torch.cat([positive_edges, negative_edges], dim=1)
+        labels = torch.cat([
+            torch.ones(positive_edges.size(1)),
+            torch.zeros(negative_edges.size(1))
+        ])
+
+        # Grab scores and calculate metrics
+        scores = self(x_graphs, edge_pairs)
+        loss = F.binary_cross_entropy_with_logits(scores, labels.float())
+        acc = self.train_acc(scores, labels.int())
+
+        # Logging
+        self.log("val_loss", loss, on_epoch=True)
+        self.log("val_acc", acc, prog_bar=True, on_epoch=True)
+
+        return loss
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.AdamW(self.parameters(), lr=1e-3)
+        return optimizer
