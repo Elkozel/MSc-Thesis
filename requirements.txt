@@ -1,7 +1,9 @@
 tqdm
 pandas
-Elasticsearch=8.17
+Elasticsearch==8.17
 pymongo
 pyarrow
 randomname
 comet_ml
+lightning
+torchmetrics

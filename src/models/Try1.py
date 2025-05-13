@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
+import lightning as L
 import torch.nn.functional as F
 from torch_geometric.nn import GCNConv
-
 
 class GNNEncoder(nn.Module):
     def __init__(self, in_channels, hidden_channels):
