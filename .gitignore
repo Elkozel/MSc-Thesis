@@ -71,4 +71,4 @@ maps.bson
 .comet.config
 
 # Pytorch checkpoints
-.ckpt
+*.ckpt
