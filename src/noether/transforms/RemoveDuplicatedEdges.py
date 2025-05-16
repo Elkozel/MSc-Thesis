@@ -1,13 +1,16 @@
 from typing import List, Union
 
+import torch
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.data.datapipes import functional_transform
 from torch_geometric.transforms import BaseTransform
-from torch_geometric.utils import coalesce
 
+def find_duplicated_edges(edge_index):
+    _, indexes = torch.unique(edge_index, dim=1, return_inverse=True)
+    return torch.unique(indexes)
 
-@functional_transform('remove_duplicated_edges_temporal')
-class RemoveDuplicatedEdgesTemporal(BaseTransform):
+# @functional_transform('remove_duplicated_edges_temporal')
+class RemoveDuplicatedEdges(BaseTransform):
     r"""Removes duplicated edges from a given homogeneous or heterogeneous
     graph. Useful to clean-up known repeated edges/self-loops in common
     benchmark datasets, *e.g.*, in :obj:`ogbn-products`.
@@ -22,7 +25,7 @@ class RemoveDuplicatedEdgesTemporal(BaseTransform):
     """
     def __init__(
         self,
-        key: Union[str, List[str]] = ['edge_attr', 'edge_weight'],
+        key: Union[str, List[str]] = ['edge_attr', 'edge_weight', 'time'],
         reduce: str = "add",
     ) -> None:
         if isinstance(key, str):
@@ -38,18 +41,10 @@ class RemoveDuplicatedEdgesTemporal(BaseTransform):
 
         for store in data.edge_stores:
             keys = [key for key in self.keys if key in store]
-
-            size = [s for s in store.size() if s is not None]
-            num_nodes = max(size) if len(size) > 0 else None
-
-            store.edge_index, edge_attrs = coalesce(
-                edge_index=store.edge_index,
-                edge_attr=[store[key] for key in keys],
-                num_nodes=num_nodes,
-                reduce=self.reduce,
-            )
-
-            for key, edge_attr in zip(keys, edge_attrs):
-                store[key] = edge_attr
+            mask = find_duplicated_edges(store.edge_index)
+            
+            store.edge_index = store.edge_index[:, mask]
+            for key in keys:
+                store[key] = store[key][mask]
 
         return data
