@@ -7,3 +7,4 @@ randomname
 comet_ml
 lightning
 torchmetrics
+pytest
