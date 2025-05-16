@@ -34,9 +34,19 @@ class RNNEncoder(nn.Module):
         output, final_state = self.rnn(x_seq)
         return output, final_state  # optional depending on decoder
     
-class DotProductDecoder(nn.Module):
-    def forward(self, z_src, z_dst):
-        return (z_src * z_dst).sum(dim=1)
+class MLPDecoder(nn.Module):
+    def __init__(self, embed_dim: int, hidden_dim: int = 128):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(2 * embed_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 1),
+        )
+        
+    def forward(self, src: torch.Tensor, dst: torch.Tensor) -> torch.Tensor:
+        # src,dst: [num_edges, embed_dim]
+        h = torch.cat([src, dst], dim=-1)    # → [num_edges, 2*embed_dim]
+        return self.net(h).squeeze(-1)       # → [num_edges]
 
 class LitFullModel(L.LightningModule):
     def __init__(self, in_channels, hidden_channels, ):
@@ -44,13 +54,10 @@ class LitFullModel(L.LightningModule):
         self.save_hyperparameters()
         self.gnn = GNNEncoder(in_channels, hidden_channels)
         self.rnn = RNNEncoder(hidden_channels)
-        self.decoder = DotProductDecoder()
+        self.decoder = MLPDecoder(hidden_channels)
 
         # define metrics
-        self.train_acc = torchmetrics.classification.BinaryAccuracy(threshold=0.5, multidim_average="samplewise")
-        self.val_acc = torchmetrics.classification.BinaryAccuracy(threshold=0.5, multidim_average="samplewise")
-        self.test_acc = torchmetrics.classification.BinaryAccuracy(threshold=0.5, multidim_average="samplewise")
-        self.red_team_acc = torchmetrics.classification.BinaryAccuracy(threshold=0.5, multidim_average="samplewise")
+        self.binary_acc = torchmetrics.classification.BinaryAccuracy(threshold=0.5)
 
 
     def forward(self, graph_sequence, edge_pairs):
@@ -97,7 +104,7 @@ class LitFullModel(L.LightningModule):
         # Grab scores and calculate metrics
         scores = self(x_graphs, edge_pairs)
         loss = F.binary_cross_entropy_with_logits(scores, labels.float())
-        acc = self.train_acc(scores, labels.int())
+        acc = self.binary_acc(scores, labels.int())
 
         # Logging
         self.log("train_loss", loss, on_epoch=True)
@@ -109,6 +116,17 @@ class LitFullModel(L.LightningModule):
         """Validates the model on one batch of temporal graphs."""
         x_graphs, y_graph = batch
 
+        # Sometimes, validation could have redteam activity, so we check on that as well
+        red_team_edges = y_graph.edge_index[y_graph.y == 1]
+        
+        if red_team_edges.size > 0:
+            red_team_labels = torch.zeros(red_team_edges.size(1))
+            
+            red_team_pred = self(x_graphs, red_team_edges)
+            red_team_acc = self.binary_acc(red_team_pred, red_team_labels)
+            
+            self.log("val_redteam", red_team_acc)
+
         # Positive and negative edge sampling
         positive_edges = y_graph.edge_index
         negative_edges = negative_sampling(
@@ -126,7 +144,7 @@ class LitFullModel(L.LightningModule):
         # Grab scores and calculate metrics
         scores = self(x_graphs, edge_pairs)
         loss = F.binary_cross_entropy_with_logits(scores, labels.float())
-        acc = self.train_acc(scores, labels.int())
+        acc = self.binary_acc(scores, labels.int())
 
         # Logging
         self.log("val_loss", loss, on_epoch=True)
@@ -137,6 +155,17 @@ class LitFullModel(L.LightningModule):
     def test_step(self, batch: tuple[list[Data], Data], batch_idx):
         """Validates the model on one batch of temporal graphs."""
         x_graphs, y_graph = batch
+        
+        # For testing, we also need to see if red team activities will be detected
+        red_team_edges = y_graph.edge_index[y_graph.y == 1]
+        
+        if red_team_edges.size > 0:            
+            red_team_labels = torch.zeros(red_team_edges.size(1))
+            
+            red_team_pred = self(x_graphs, red_team_edges)
+            red_team_acc = self.binary_acc(red_team_pred, red_team_labels)
+            
+            self.log("test_redteam", red_team_acc)
 
         # Positive and negative edge sampling
         positive_edges = y_graph.edge_index
@@ -151,29 +180,17 @@ class LitFullModel(L.LightningModule):
             torch.ones(positive_edges.size(1)),
             torch.zeros(negative_edges.size(1))
         ])
-        
-        # For testing, we also need to see if red team activities will be detected
-        red_team_edges = y_graph.edge_index[y_graph.y == 1]
-        
-        if red_team_edges.size > 0:            
-            red_team_labels = torch.zeros(red_team_edges.size(1))
-            
-            red_team_pred = self(x_graphs, red_team_edges)
-            red_team_acc = self.red_team_acc(red_team_pred, red_team_labels)
-            
-            self.log("redteam_acc", red_team_acc)
 
         # Grab scores and calculate metrics
         scores = self(x_graphs, edge_pairs)
         loss = F.binary_cross_entropy_with_logits(scores, labels.float())
-        acc = self.test_acc(scores, labels.int())
+        acc = self.binary_acc(scores, labels.int())
 
         # Logging
         self.log("test_loss", loss, on_epoch=True)
         self.log("test_acc", acc, prog_bar=True, on_epoch=True)
 
         return loss
-        
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=1e-3)
