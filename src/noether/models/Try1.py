@@ -117,9 +117,9 @@ class LitFullModel(L.LightningModule):
         x_graphs, y_graph = batch
 
         # Sometimes, validation could have redteam activity, so we check on that as well
-        red_team_edges = y_graph.edge_index[y_graph.y == 1]
+        red_team_edges = y_graph.edge_index[:, y_graph.y.squeeze() == 1]
         
-        if red_team_edges.size > 0:
+        if red_team_edges.size(1) > 0:
             red_team_labels = torch.zeros(red_team_edges.size(1))
             
             red_team_pred = self(x_graphs, red_team_edges)
@@ -140,6 +140,9 @@ class LitFullModel(L.LightningModule):
             torch.ones(positive_edges.size(1)),
             torch.zeros(negative_edges.size(1))
         ])
+        randomize_edges = torch.randperm(edge_pairs.size(1))
+        edge_pairs = edge_pairs[:, randomize_edges]
+        labels = labels[randomize_edges]
 
         # Grab scores and calculate metrics
         scores = self(x_graphs, edge_pairs)
@@ -148,7 +151,7 @@ class LitFullModel(L.LightningModule):
 
         # Logging
         self.log("val_loss", loss, on_epoch=True)
-        self.log("val_acc", acc, prog_bar=True, on_epoch=True)
+        self.log("val_acc", acc, on_epoch=True)
 
         return loss
     
@@ -157,9 +160,10 @@ class LitFullModel(L.LightningModule):
         x_graphs, y_graph = batch
         
         # For testing, we also need to see if red team activities will be detected
-        red_team_edges = y_graph.edge_index[y_graph.y == 1]
+        red_team_edges = y_graph.edge_index[:, y_graph.y.squeeze() == 1]
         
-        if red_team_edges.size > 0:            
+        self.log("test_size", red_team_edges.size(1))
+        if red_team_edges.size(1) > 0:
             red_team_labels = torch.zeros(red_team_edges.size(1))
             
             red_team_pred = self(x_graphs, red_team_edges)
@@ -180,6 +184,9 @@ class LitFullModel(L.LightningModule):
             torch.ones(positive_edges.size(1)),
             torch.zeros(negative_edges.size(1))
         ])
+        randomize_edges = torch.randperm(edge_pairs.size(1))
+        edge_pairs = edge_pairs[:, randomize_edges]
+        labels = labels[randomize_edges]
 
         # Grab scores and calculate metrics
         scores = self(x_graphs, edge_pairs)
