@@ -95,7 +95,7 @@ test_data = LANLGraphFetcher(es, ("lanl-auth", "lanl-redteam"),
 
 model = LitFullModel(hyper_params["in_channels"], hyper_params["hidden_channels"])
 
-early_stop_callback = EarlyStopping(monitor="val_loss", mode="max")
+early_stop_callback = EarlyStopping(monitor="val_loss", mode="min", verbose=True, check_on_train_epoch_end=False)
     
 trainer = L.Trainer(max_epochs=hyper_params["num_epochs"], logger=comet_logger, callbacks=[early_stop_callback])
 trainer.fit(model=model, train_dataloaders=MovingWindowDataloader(train_data, hyper_params["window_size"]),
