@@ -13,16 +13,22 @@ class GNNEncoder(nn.Module):
     def __init__(self, in_channels, hidden_channels):
         super().__init__()
         self.conv1 = GCNConv(in_channels, hidden_channels)
+        self.norm1 = nn.LayerNorm(hidden_channels)
         self.conv2 = GCNConv(hidden_channels, hidden_channels)
+        self.norm2 = nn.LayerNorm(hidden_channels)
         self.conv3 = GCNConv(hidden_channels, hidden_channels)
+        self.norm3 = nn.LayerNorm(hidden_channels)
 
     def forward(self, x, edge_index):
-        x = self.conv1(x, edge_index)
-        x = F.relu(x)
-        x = self.conv2(x, edge_index)
-        x = F.relu(x)
-        x = self.conv3(x, edge_index)
-        return x  # node embeddings
+        out = self.conv1(x, edge_index)
+        out = self.norm1(out)
+        out = F.relu(out)
+        out = self.conv2(out, edge_index)
+        out = self.norm2(out)
+        out = F.relu(out)
+        out = self.conv3(out, edge_index)
+        out = self.norm3(out)
+        return out  # node embeddings
     
 class RNNEncoder(nn.Module):
     def __init__(self, hidden_channels, num_layers=1):
@@ -88,7 +94,8 @@ class LitFullModel(L.LightningModule):
 
 
         # Positive and negative edge sampling
-        positive_edges = y_graph.edge_index
+        positive_mask = y_graph.y.squeeze() == 0
+        positive_edges = y_graph.edge_index[:, positive_mask]
         negative_edges = negative_sampling(
             edge_index=y_graph.edge_index,
             num_nodes=y_graph.num_nodes,
@@ -117,7 +124,8 @@ class LitFullModel(L.LightningModule):
         x_graphs, y_graph = batch
 
         # Sometimes, validation could have redteam activity, so we check on that as well
-        red_team_edges = y_graph.edge_index[:, y_graph.y.squeeze() == 1]
+        redteam_mask = y_graph.y.squeeze() == 1
+        red_team_edges = y_graph.edge_index[:, redteam_mask]
         
         if red_team_edges.size(1) > 0:
             red_team_labels = torch.zeros(red_team_edges.size(1))
@@ -128,7 +136,8 @@ class LitFullModel(L.LightningModule):
             self.log("val_redteam", red_team_acc)
 
         # Positive and negative edge sampling
-        positive_edges = y_graph.edge_index
+        positive_mask = y_graph.y.squeeze() == 0
+        positive_edges = y_graph.edge_index[:, positive_mask]
         negative_edges = negative_sampling(
             edge_index=y_graph.edge_index,
             num_nodes=y_graph.num_nodes,
@@ -160,7 +169,8 @@ class LitFullModel(L.LightningModule):
         x_graphs, y_graph = batch
         
         # For testing, we also need to see if red team activities will be detected
-        red_team_edges = y_graph.edge_index[:, y_graph.y.squeeze() == 1]
+        redteam_mask = y_graph.y.squeeze() == 1
+        red_team_edges = y_graph.edge_index[:, redteam_mask]
         
         self.log("test_size", red_team_edges.size(1))
         if red_team_edges.size(1) > 0:
@@ -172,7 +182,8 @@ class LitFullModel(L.LightningModule):
             self.log("test_redteam", red_team_acc)
 
         # Positive and negative edge sampling
-        positive_edges = y_graph.edge_index
+        positive_mask = y_graph.y.squeeze() == 0
+        positive_edges = y_graph.edge_index[:, positive_mask]
         negative_edges = negative_sampling(
             edge_index=y_graph.edge_index,
             num_nodes=y_graph.num_nodes,
