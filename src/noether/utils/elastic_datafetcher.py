@@ -5,6 +5,7 @@ import math
 from elasticsearch import Elasticsearch
 import torch
 import logging
+import pandas as pd
 from torch_geometric.data import Data
 
 # Configure logging
@@ -101,7 +102,7 @@ class LANLRecordFetcher(ElasticRecordFetcher):
             self.prefetch()
 
     def prefetch(self):
-        self.fetch_redteam_logs()
+        self.get_redteam_logs()
         
         self.get_map("logon type")
         self.get_map("authentication type")
@@ -111,7 +112,10 @@ class LANLRecordFetcher(ElasticRecordFetcher):
     # -------------------------------------------------------------------
     # Redteam Functions
     # -------------------------------------------------------------------
-    def fetch_redteam_logs(self):
+    def get_redteam_logs(self, force: bool = False):
+        if self.redteam_data is not None and force == False:
+            return self.redteam_data
+        
         query = {
             "range": {
                 "time": {
@@ -121,7 +125,7 @@ class LANLRecordFetcher(ElasticRecordFetcher):
             }
         }
         rt_data = ElasticRecordFetcher(self.es, self.redteam_index, query, pagination=self.pagination, sort_on=self.sort_on)
-        self.redteam_data = rt_data.fetch_all()
+        self.redteam_data = pd.DataFrame(rt_data.fetch_all())
         return self.redteam_data
     
     # -------------------------------------------------------------------
@@ -291,6 +295,8 @@ class LANLGraphFetcher(LANLRecordFetcher):
         """
         logger.debug(f"Starting graph creation from {len(records)} records...")
 
+        redteam = self.get_redteam_logs()
+
         nodemap = self.get_map(("source computer", "destination computer"))
         logon_map = self.get_map("logon type")
         auth_map = self.get_map("authentication type")
@@ -311,6 +317,9 @@ class LANLGraphFetcher(LANLRecordFetcher):
         skipped = 0
         for r in records:
             try:
+                malicious = ((redteam['source computer'] == r["source computer"]) & 
+                             (redteam['destination computer'] == r["destination computer"]) &
+                             (redteam['time'] == r["time"])).any() if not redteam.empty else False
                 edge_index[0, i] = nodemap[r["source computer"]]
                 edge_index[1, i] = nodemap[r["destination computer"]]
                 time_tensor[i] = float(r["time"])
@@ -318,16 +327,17 @@ class LANLGraphFetcher(LANLRecordFetcher):
                 edge_attr[i, 1] = logon_map[r["logon type"]]
                 edge_attr[i, 2] = auth_map[r["authentication type"]]
                 edge_attr[i, 3] = authOrient_map[r["authentication orientation"]]
-                y_tensor[i] = int(r.get("is_malicious", 0))
+                # y_tensor[i] = int(r.get("is_malicious", 0))
+                y_tensor[i] = 1 if malicious else 0
                 i += 1
             except KeyError as e:
                 skipped += 1
-                logger.debug("Skipping record due to missing node: %s", e)
+                logger.debug("Skipping record due to: %s", e)
                 continue
 
         # Slice tensors if some records were skipped
         if skipped > 0:
-            logger.warning(f"Skipped {skipped} records due to missing nodemap entries. (time: {curr_time})")
+            logger.warning(f"Skipped {skipped} records due to various errors. (time: {curr_time})")
             edge_index = edge_index[:, :i]
             time_tensor = time_tensor[:i]
             y_tensor = y_tensor[:i]
