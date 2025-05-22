@@ -8,3 +8,4 @@ comet_ml
 lightning
 torchmetrics
 pytest
+networkx-temporal[draw]
