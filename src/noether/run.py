@@ -114,7 +114,7 @@ print(f"Chosen model \n {model}")
 early_stop_callback = EarlyStopping(monitor="val_loss", mode="min", verbose=True, check_on_train_epoch_end=False)
 
 
-trainer = L.Trainer(max_epochs=hyper_params["num_epochs"], logger=comet_logger, callbacks=[early_stop_callback], default_root_dir=f"models/{hyper_params["model_name"]}/")
+trainer = L.Trainer(max_epochs=hyper_params["num_epochs"], logger=comet_logger, callbacks=[early_stop_callback], default_root_dir=f"models/{hyper_params['model_name']}/")
 trainer.fit(model=model, train_dataloaders=MovingWindowDataloader(train_data, hyper_params["window_size"]),
               val_dataloaders=MovingWindowDataloader(valid_data, hyper_params["window_size"]))
 trainer.test(model=model, dataloaders=MovingWindowDataloader(test_data, hyper_params["window_size"]))
