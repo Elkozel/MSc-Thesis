@@ -47,7 +47,7 @@ default_hyper_params = {
     "hidden_channels": 15,
     "learning_rate": 0.001,
     "dropout_rate": 0.02,
-    "num_epochs": 5,
+    "num_epochs": 8,
 
     "seconds_bin": 20, # How many seconds of data to be put together into a single graph
     "train_from": 0,
@@ -58,23 +58,23 @@ default_hyper_params = {
     "test_to": 1_363_492,
     "window_size": 20, # How many past data's should be given to the RNN
 }
-default_hyper_params = {
-    "model_name": model_name,
-    "in_channels": 3,
-    "hidden_channels": 15,
-    "learning_rate": 0.001,
-    "dropout_rate": 0.02,
-    "num_epochs": 2,
+# default_hyper_params = {
+#     "model_name": model_name,
+#     "in_channels": 3,
+#     "hidden_channels": 15,
+#     "learning_rate": 0.001,
+#     "dropout_rate": 0.02,
+#     "num_epochs": 2,
 
-    "seconds_bin": 60, # How many seconds of data to be put together into a single graph
-    "train_from": 0,
-    "train_to": 150_885,
-    "valid_from": 460_000,
-    "valid_to": 500_000,
-    "test_from": 734_000,
-    "test_to": 774_000,
-    "window_size": 20, # How many past data's should be given to the RNN
-}
+#     "seconds_bin": 60, # How many seconds of data to be put together into a single graph
+#     "train_from": 0,
+#     "train_to": 150_885,
+#     "valid_from": 460_000,
+#     "valid_to": 500_000,
+#     "test_from": 734_000,
+#     "test_to": 774_000,
+#     "window_size": 20, # How many past data's should be given to the RNN
+# }
 comet_logger.log_hyperparams(default_hyper_params)
 
 es_url="http://localhost:9200"
