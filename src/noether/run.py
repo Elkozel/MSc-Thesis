@@ -7,7 +7,7 @@ from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 import sys
 
 import lightning as L
-from utils.window_dataloader import MovingWindowDataloader
+from noether.dataloaders.window_dataloader import MovingWindowDataloader
 from elasticsearch import Elasticsearch
 from dataloaders.LANL import LANLGraphLoader
 

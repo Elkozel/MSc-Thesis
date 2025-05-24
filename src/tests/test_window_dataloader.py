@@ -1,5 +1,5 @@
 import pytest
-from noether.utils.window_dataloader import MovingWindowDataloader
+from noether.dataloaders.window_dataloader import MovingWindowDataloader
 
 # ---------- TESTS ----------
 
