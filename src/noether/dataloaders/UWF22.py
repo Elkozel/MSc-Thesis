@@ -1,7 +1,8 @@
 from elasticsearch import Elasticsearch
-from noether.utils.Elasticsearch import ElasticRecordFetcher
+from utils.Elasticsearch import ElasticRecordFetcher
 import torch
 from torch_geometric.data import Data
+from torch.utils.data import IterableDataset
 import math
 import logging
 import pandas as pd
@@ -174,18 +175,28 @@ class UWF22GraphFetcher(UWF22RecordFetcher):
     def fetch_all(self):
         return list(self)
 
-class UWFGraphMaker():
-    def __init__(self, engine, from_ts: int, to_ts: int, bin_size: int = 20, ufw_ts_offset = ):
+class UWFGraphMaker(IterableDataset): 
+    def __init__(self, engine, from_ts: int, to_ts: int, bin_size: int = 20, prefetch: bool = False):
         self.engine = engine
-        self._nodemap_table = "ufw22_nodemap"
-        self._clientmap_table = "ufw22_clientmap"
+        
+        if from_ts % bin_size != 0:
+            nearest_divisible = math.floor(from_ts / bin_size) * bin_size
+            logger.error(f"Loader start {from_ts} should be divisible by {bin_size}, please change it to {nearest_divisible}")
+        if to_ts % bin_size != 0:
+            nearest_divisible = math.floor(to_ts / bin_size) * bin_size
+            logger.error(f"Loader end {to_ts} should be divisible by {bin_size}, please change it to {nearest_divisible}")
         self.from_ts = from_ts
         self.to_ts = to_ts
         self.bin_size = bin_size
-        self.start_bin = math.floor(from_ts / bin_size) * bin_size
-        self.end_bin = math.floor(to_ts / bin_size) * bin_size
+        
+        self._nodemap_table = "ufw22_nodemap"
+        self._clientmap_table = "ufw22_clientmap"
         self.clientmap = None
         self.nodemap = None
+
+        if prefetch:
+            self.get_clientmap()
+            self.get_nodemap()
     
     def get_nodemap(self):
         if self.nodemap is not None:
@@ -211,7 +222,22 @@ class UWFGraphMaker():
         self.clientmap = pd.read_sql_query(query, self.engine)
         return self.clientmap
         
-    def fetch_data(self):
+    def __iter__(self):
+        worker_info = torch.utils.data.get_worker_info()
+        if worker_info is None:
+            return iter(list(self.fetch_data(self.from_ts, self.to_ts)))
+        else:
+            worker_id = worker_info.id
+            start_bin = math.floor(self.from_ts / self.bin_size)
+            end_bin = math.floor(self.to_ts / self.bin_size)
+
+            per_worker = int(math.ceil((start_bin - end_bin) / float(worker_info.num_workers)))
+            iter_start = start_bin + worker_id * per_worker
+            iter_end = min(iter_start + per_worker, end_bin)
+
+            return iter(list(self.fetch_data(iter_start*self.bin_size, iter_end*self.bin_size)))
+
+    def fetch_data(self, from_ts: int, to_ts: int):
         query = f"""
         WITH enriched AS (
             SELECT
@@ -231,8 +257,8 @@ class UWFGraphMaker():
             JOIN ufw22_clientmap hp_dst
             ON z.dest_ip_zeek = hp_dst.ip AND z.dest_port_zeek = hp_dst.port
             WHERE z.datetime IS NOT NULL 
-            AND z.ts >= {self.start_bin}
-            AND z.ts < {self.end_bin}
+            AND z.ts >= {from_ts}
+            AND z.ts < {to_ts}
         ),
         filtered AS (
             SELECT
@@ -266,14 +292,12 @@ class UWFGraphMaker():
             "Reconnaissance": 9,
             "Resource Development": 10
         }
-        
-        data = []
 
-        for ts in range(self.start_bin, self.end_bin, self.bin_size):
+        for ts in range(from_ts, to_ts, self.bin_size):
             df_ts = df[df["time_bin"] == ts]
             print(f"{df_ts.size} records between {ts} and {ts+self.bin_size}")
             if df_ts.empty:
-                data.append(Data())
+                yield Data()
                 print("Skipping")
                 continue
 
@@ -288,6 +312,4 @@ class UWFGraphMaker():
             d.edge_index = torch.from_numpy(df_ts[["src_ip_id", "dst_ip_id"]].to_numpy().T)
             d.y = torch.from_numpy(df_ts["label_tactic"].map(label_tactic_map).to_numpy())
 
-            data.append(d)
-
-        return data
+            yield d

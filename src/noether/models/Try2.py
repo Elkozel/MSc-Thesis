@@ -55,7 +55,7 @@ class BilinearDecoder(nn.Module):
 class LitFullModel(L.LightningModule):
     def __init__(self, in_channels, hidden_channels, dropout_rate):
         super().__init__()
-        self.save_hyperparameters()
+        self.save_hyperparameters("in_channels", "hidden_channels", "dropout_rate")
         self.gnn = GNNEncoder(in_channels, hidden_channels, dropout_rate)
         self.rnn = RNNEncoder(hidden_channels)
         self.decoder = BilinearDecoder(hidden_channels)

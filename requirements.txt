@@ -9,3 +9,4 @@ lightning
 torchmetrics
 pytest
 networkx-temporal[draw]
+urllib3
