@@ -38,11 +38,11 @@ models = {
 }
 model_name = sys.argv[1] if len(sys.argv) > 1 else "try2"
 model = models[model_name](
-    datamodule.node_features, 
+    datamodule.node_features,
     datamodule.node_features * 3,
     dropout_rate = 0.0)
 
 early_stop_callback = EarlyStopping(monitor="val_loss", mode="min", verbose=True, check_on_train_epoch_end=False)
-trainer = L.Trainer(max_epochs = 50, profiler="simple")
+trainer = L.Trainer(max_epochs = 50, profiler="simple", logger=comet_logger)
 trainer.fit(model, datamodule)
 trainer.test(model, datamodule)

@@ -3,7 +3,7 @@ import os
 import logging
 import torch
 from tqdm import tqdm
-from tqdm.contrib.concurrent import thread_map
+from tqdm.contrib.concurrent import thread_map, process_map
 import pandas as pd
 from torch.utils.data import random_split
 from torch.utils.data import ConcatDataset
@@ -109,7 +109,7 @@ class UFW22L(L.LightningDataModule):
         df["conn_state"] = df["conn_state"].map(self.conn_state_map)
         df["proto"] = df["proto"].map(self.proto_map)
         df["label_tactic"] = df["label_tactic"].map(self.tactic_map)
-        df.to_pickle(download_link["file"])
+        df.to_pickle(os.path.join(self.data_dir, download_link["file"]))
 
         return df
 
@@ -144,10 +144,8 @@ class UFW22L(L.LightningDataModule):
         # Check if preparation has not been done before
         if self.check_files():
             return
-
-        all_data = []
-        for download_link in self.download_data:
-            all_data.append(self.download(download_link))
+        
+        all_data = process_map(self.download, self.download_data, max_workers=11, desc="Downloading dataset")
 
         all_df = pd.concat(all_data, copy=False)
 
@@ -277,7 +275,7 @@ class UFW22L(L.LightningDataModule):
         self.test_data = ConcatDataset(test)
     
     def train_dataloader(self):
-        return DataLoader(self.train_data)    
+        return self.train_data
     
     def val_dataloader(self):
         return DataLoader(self.val_data)
