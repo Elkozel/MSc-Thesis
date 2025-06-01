@@ -5,7 +5,7 @@ pymongo
 pyarrow
 randomname
 comet_ml
-lightning
+lightning[extra]
 torchmetrics
 pytest
 networkx-temporal[draw]

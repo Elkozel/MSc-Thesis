@@ -25,11 +25,11 @@ class GNNEncoder(nn.Module):
         out = self.conv1(x, edge_index)
         out = self.norm1(out)
         out = F.relu(out)
-        # out = F.dropout(out, p=self.dropout, training=self.training)
+        out = F.dropout(out, p=self.dropout, training=self.training)
         out = self.conv2(out, edge_index)
         out = self.norm2(out)
         out = F.relu(out)
-        # out = F.dropout(out, p=self.dropout, training=self.training)
+        out = F.dropout(out, p=self.dropout, training=self.training)
         out = self.conv3(out, edge_index)
         out = self.norm3(out)
         return out  # node embeddings
@@ -53,15 +53,18 @@ class BilinearDecoder(nn.Module):
         return self.bilinear(z_src, z_dst).squeeze(-1)
 
 class LitFullModel(L.LightningModule):
-    def __init__(self, in_channels, hidden_channels, dropout_rate):
+    def __init__(self, in_channels, hidden_channels, dropout_rate, binary_threshold = 0.5, model_name = "Try2"):
         super().__init__()
-        self.save_hyperparameters("in_channels", "hidden_channels", "dropout_rate")
         self.gnn = GNNEncoder(in_channels, hidden_channels, dropout_rate)
         self.rnn = RNNEncoder(hidden_channels)
         self.decoder = BilinearDecoder(hidden_channels)
 
         # define metrics
-        self.binary_acc = torchmetrics.classification.BinaryAccuracy(threshold=0.5)
+        self.binary_acc = torchmetrics.classification.BinaryAccuracy(threshold=binary_threshold)
+
+        self.model_name = model_name
+        self.binary_threshold = binary_threshold
+        self.save_hyperparameters("in_channels", "hidden_channels", "dropout_rate", "binary_threshold", "model_name")
 
 
     def forward(self, graph_sequence, edge_pairs):
@@ -97,7 +100,7 @@ class LitFullModel(L.LightningModule):
         negative_edges = negative_sampling(
             edge_index=y_graph.edge_index,
             num_nodes=y_graph.num_nodes,
-            num_neg_samples=positive_edges.size(1)
+            num_neg_samples=max(positive_edges.size(1), 20)
         )
 
         edge_pairs = torch.cat([positive_edges, negative_edges], dim=1)
