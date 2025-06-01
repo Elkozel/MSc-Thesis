@@ -66,9 +66,11 @@ venv.bak/
 # Project specific cache files
 nodemap.bson
 maps.bson
+*.pkl
 
-# Comet files
+# Comet
 .comet.config
+.commetml-runs
 
 # Pytorch checkpoints
 *.ckpt
