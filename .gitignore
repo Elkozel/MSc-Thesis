@@ -70,7 +70,7 @@ maps.bson
 
 # Comet
 .comet.config
-.commetml-runs
+.cometml-runs
 
 # Pytorch checkpoints
 *.ckpt
