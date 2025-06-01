@@ -129,7 +129,7 @@ class LitFullModel(L.LightningModule):
         red_team_edges = y_graph.edge_index[:, redteam_mask]
         
         if red_team_edges.size(1) > 0:
-            red_team_labels = torch.zeros(red_team_edges.size(1))
+            red_team_labels = torch.zeros(red_team_edges.size(1), device=self.device)
             
             red_team_pred = self(x_graphs, red_team_edges)
             red_team_acc = self.binary_acc(red_team_pred, red_team_labels)
@@ -145,7 +145,7 @@ class LitFullModel(L.LightningModule):
             num_neg_samples=positive_edges.size(1)
         )
 
-        edge_pairs = torch.cat([positive_edges, negative_edges], dim=1)
+        edge_pairs = torch.cat([positive_edges, negative_edges], dim=1).to(self.device)
         labels = torch.cat([
             torch.ones(positive_edges.size(1)),
             torch.zeros(negative_edges.size(1))
@@ -156,8 +156,8 @@ class LitFullModel(L.LightningModule):
 
         # Grab scores and calculate metrics
         scores = self(x_graphs, edge_pairs)
-        loss = F.binary_cross_entropy_with_logits(scores, labels.float())
-        acc = self.binary_acc(scores, labels.int())
+        loss = F.binary_cross_entropy_with_logits(scores, labels.float().to(self.device))
+        acc = self.binary_acc(scores, labels.int().to(self.device))
 
         # Logging
         self.log("val_loss", loss, on_epoch=True)

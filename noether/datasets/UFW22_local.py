@@ -101,8 +101,8 @@ class UFW22L(L.LightningDataModule):
         self.edge_features = 0
     
     def check_files(self):
-        return os.path.exists(self.hostmap_file) and \
-               all([os.path.exists(link["file"]) for link in self.download_data])
+        return os.path.exists(os.path.join(self.data_dir, self.hostmap_file)) and \
+               all([os.path.exists(os.path.join(self.data_dir, link["file"])) for link in self.download_data])
     
     def download(self, download_link):
         df = pd.read_parquet(download_link["url"])
@@ -161,11 +161,11 @@ class UFW22L(L.LightningDataModule):
         pbar.update(1)
 
         pbar.set_description(f"Saving hostmap")
-        hostmap.to_pickle(self.hostmap_file)
+        hostmap.to_pickle(os.path.join(self.data_dir, self.hostmap_file))
         pbar.update(1)
 
         for id, df in enumerate(all_data):
-            pbar = tqdm(total=14, desc=f"Preparing file {self.download_data[id]["file"]}")
+            pbar = tqdm(total=14, desc=f"Preparing file {self.download_data[id]['file']}")
             pbar.set_description(f"Applying hostmap")
             def apply_hostmap(df: pd.DataFrame):
                 df['src_ip_id'] = df['src_ip_zeek'].map(hostmap.set_index('ip')['host_id'])
@@ -194,10 +194,10 @@ class UFW22L(L.LightningDataModule):
             # Save everything
             pbar.set_description(f"Saving everything")
             filename = self.download_data[id]
-            df.to_pickle(filename["file"])            
+            df.to_pickle(os.path.join(self.data_dir, filename["file"]))            
         
     def df_to_data(self, df: pd.DataFrame, hostmap: pd.DataFrame):
-        device = "cpu"
+        device = "cuda"
         data = Data()
         data.time = torch.from_numpy(df["ts"].to_numpy()).to(device, dtype=torch.int64)
         data.x = torch.from_numpy(hostmap[[
@@ -239,7 +239,7 @@ class UFW22L(L.LightningDataModule):
         
     def setup_df(self, hostmap, filename):
         # logger.info(f"Load data")
-        df: pd.DataFrame = pd.read_pickle(filename)
+        df: pd.DataFrame = pd.read_pickle(os.path.join(self.data_dir, filename))
 
         # logger.info(f"Making Data from df")
         data = self.df_to_data(df, hostmap)
@@ -263,7 +263,7 @@ class UFW22L(L.LightningDataModule):
         
     def setup(self, stage: str):
         logger.info("Load hostmap")
-        hostmap = pd.read_pickle(self.hostmap_file)
+        hostmap = pd.read_pickle(os.path.join(self.data_dir, self.hostmap_file))
         logger.info("Loading datafiles")
         args = [(hostmap, download_link["file"]) for download_link in self.download_data]
         datasets = thread_map(lambda x: self.setup_df(*x), args, max_workers=11)  # adjust max_workers as needed
