@@ -196,9 +196,8 @@ class UFW22L(L.LightningDataModule):
             pool.map(self.additional_processing, args)
 
     def df_to_data(self, df: pd.DataFrame, hostmap: pd.DataFrame):
-        device = "cuda"
         data = Data()
-        data.time = torch.from_numpy(df["ts"].to_numpy()).to(device, dtype=torch.int64)
+        data.time = torch.from_numpy(df["ts"].to_numpy()).to(dtype=torch.int64)
         data.x = torch.from_numpy(hostmap[[
                 "internal",
                 "broadcast",
@@ -206,9 +205,9 @@ class UFW22L(L.LightningDataModule):
                 "ipv4",
                 "ipv6",
                 "valid",
-        ]].to_numpy()).to(device, dtype=torch.float32)
-        data.edge_index = torch.from_numpy(df[["src_ip_id", "dest_ip_id"]].to_numpy().T).to(device, dtype=torch.int64)
-        data.y = torch.from_numpy(df["label_tactic"].to_numpy()).to(device, dtype=torch.int64)
+        ]].to_numpy()).to(torch.float32)
+        data.edge_index = torch.from_numpy(df[["src_ip_id", "dest_ip_id"]].to_numpy().T).to(torch.int64)
+        data.y = torch.from_numpy(df["label_tactic"].to_numpy()).to(torch.int64)
 
         return data
 
@@ -230,11 +229,6 @@ class UFW22L(L.LightningDataModule):
                 y=data.y[start_idx:end_idx],
                 x=data.x
             )
-
-    def transfer_batch_to_device(self, batch, device, dataloader_idx):
-        # logger.info(f"Transfering batch {batch} to device {device}")
-        return batch
-
         
     def setup_df(self, hostmap, filename):
         # logger.info(f"Load data")
@@ -250,15 +244,12 @@ class UFW22L(L.LightningDataModule):
 
         # logger.info(f"Transforming data")
         data_binned = list(map(self.transform_data, data_binned))
-        
-        # logger.info(f"Creating dataset")
-        dataset = MovingWindowDataset(data_binned, window_size=self.rnn_window)
 
         # logger.info(f"Creating split")
-        generator = torch.Generator().manual_seed(42)
-        datasets = random_split(dataset, [0.6, 0.25, 0.15], generator=generator)
+        # generator = torch.Generator().manual_seed(42)
+        # datasets = random_split(dataset, [0.6, 0.25, 0.15], generator=generator)
 
-        return datasets
+        return data_binned, [], []
         
     def setup(self, stage: str):
         logger.info("Load hostmap")
@@ -274,7 +265,7 @@ class UFW22L(L.LightningDataModule):
         self.test_data = ConcatDataset(test)
     
     def train_dataloader(self):
-        return self.train_data
+        return DataLoader(self.train_data)
     
     def val_dataloader(self):
         return DataLoader(self.val_data)
