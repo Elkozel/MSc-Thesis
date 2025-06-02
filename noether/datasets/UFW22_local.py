@@ -1,13 +1,16 @@
-import ipaddress
+from multiprocessing.pool import ThreadPool
 import os
 import logging
+from random import randrange
+import time
 import torch
 from tqdm import tqdm
 from tqdm.contrib.concurrent import thread_map, process_map
 import pandas as pd
+from transforms.EnrichHost import EnrichHost
 from torch.utils.data import random_split
 from torch.utils.data import ConcatDataset
-from torch_geometric.data import Data, Dataset, DataLoader, Batch
+from torch_geometric.data import Data, Dataset, DataLoader
 import lightning as L
 
 
@@ -104,79 +107,54 @@ class UFW22L(L.LightningDataModule):
         return os.path.exists(os.path.join(self.data_dir, self.hostmap_file)) and \
                all([os.path.exists(os.path.join(self.data_dir, link["file"])) for link in self.download_data])
     
-    def download(self, download_link):
-        df = pd.read_parquet(download_link["url"])
-        df["conn_state"] = df["conn_state"].map(self.conn_state_map)
-        df["proto"] = df["proto"].map(self.proto_map)
-        df["label_tactic"] = df["label_tactic"].map(self.tactic_map)
-        df.to_pickle(os.path.join(self.data_dir, download_link["file"]))
+    def download(self, args):
+        download_link, position = args
+        with tqdm(position=position, total=5, desc=f"Downloading {download_link['file']}") as progress:
+            df = pd.read_parquet(download_link["url"])
+            progress.update(1)
+            df["conn_state"] = df["conn_state"].map(self.conn_state_map)
+            progress.update(1)
+            df["proto"] = df["proto"].map(self.proto_map)
+            progress.update(1)
+            df["label_tactic"] = df["label_tactic"].map(self.tactic_map)
+            progress.update(1)
+            df.to_pickle(os.path.join(self.data_dir, download_link["file"]))
+            progress.update(1)
 
         return df
-
     
-    def enrich_host(self, host, host_id):
-        try:
-            ip_obj = ipaddress.ip_address(host)
-            return {
-                "ip": host,
-                "host_id": host_id,
-                "internal": ip_obj.is_private,
-                "broadcast": ip_obj == ipaddress.IPv4Address('255.255.255.255'),
-                "multicast": ip_obj.is_multicast,
-                "ipv4": ip_obj.version == 4,
-                "ipv6": ip_obj.version == 6,
-                "valid": True
-            }
-            
-        except ValueError:
-            return {
-                "ip": host,
-                "host_id": host_id,
-                "internal": False,
-                "broadcast": False,
-                "multicast": False,
-                "ipv4": False,
-                "ipv6": False,
-                "valid": False
-            }
-            
-    def prepare_data(self):
-        # Check if preparation has not been done before
-        if self.check_files():
-            return
-        
-        all_data = process_map(self.download, self.download_data, max_workers=11, desc="Downloading dataset")
-
-        all_df = pd.concat(all_data, copy=False)
-
+    def prepare_hostmap(self, all_df):
         pbar = tqdm(total=3, desc=f"Generating hostmap")
-        # Hostmap
+
         pbar.set_description(f"Generating hostmap")
         all_hosts = set(all_df['src_ip_zeek'].unique()) \
             .union(set(all_df['dest_ip_zeek'].unique()))
         pbar.update(1)
             
         pbar.set_description(f"Enriching nodemap")
-        hostmap = pd.DataFrame([self.enrich_host(host, id) for id, host in enumerate(all_hosts)])
+        hostmap = pd.DataFrame([EnrichHost.enrich_host(host, id) for id, host in enumerate(all_hosts)])
+        hostmap = hostmap.set_index('ip')['host_id']
         pbar.update(1)
 
         pbar.set_description(f"Saving hostmap")
         hostmap.to_pickle(os.path.join(self.data_dir, self.hostmap_file))
         pbar.update(1)
-
-        for id, df in enumerate(all_data):
-            pbar = tqdm(total=14, desc=f"Preparing file {self.download_data[id]['file']}")
+        
+        return hostmap
+    
+    def additional_processing(self, args):
+        df, file, min_time, hostmap, position = args
+        with tqdm(total=4, desc=f"Preparing file {file}", position=position) as pbar:
             pbar.set_description(f"Applying hostmap")
             def apply_hostmap(df: pd.DataFrame):
-                df['src_ip_id'] = df['src_ip_zeek'].map(hostmap.set_index('ip')['host_id'])
-                df['dest_ip_id'] = df['dest_ip_zeek'].map(hostmap.set_index('ip')['host_id'])
+                df['src_ip_id'] = df['src_ip_zeek'].map(hostmap)
+                df['dest_ip_id'] = df['dest_ip_zeek'].map(hostmap)
                 return df
             df = apply_hostmap(df)
             pbar.update(1)
             
             # Fixing time
             pbar.set_description(f"Making the time relative")
-            min_time = all_df["ts"].min()
             def make_time_relative(df: pd.DataFrame):
                 df = df.rename(columns={"ts": "ts_abs"})
                 df['ts'] = df['ts_abs'] - min_time
@@ -193,9 +171,30 @@ class UFW22L(L.LightningDataModule):
             
             # Save everything
             pbar.set_description(f"Saving everything")
-            filename = self.download_data[id]
-            df.to_pickle(os.path.join(self.data_dir, filename["file"]))            
+            df.to_pickle(os.path.join(self.data_dir, file))
+            pbar.update(1)
+            
+    def prepare_data(self):
+        # Check if preparation has not been done before
+        if self.check_files():
+            return
         
+        # Download files
+        with ThreadPool(11) as pool:
+            args = [(url, pos) for pos, url in enumerate(self.download_data, 1)]
+            results = pool.map(self.download, args)
+
+        # Hostmap
+        all_df = pd.concat(results, copy=False)
+        hostmap = self.prepare_hostmap(all_df)
+        min_time = float(all_df['ts'].min())
+
+        # Additional processing of the data
+        with ThreadPool(11) as pool:
+            all_df_zip = zip(results, self.download_data)
+            args = [(df, url["file"], min_time, hostmap, pos) for pos, (df, url) in enumerate(all_df_zip, 1)]
+            pool.map(self.additional_processing, args)
+
     def df_to_data(self, df: pd.DataFrame, hostmap: pd.DataFrame):
         device = "cuda"
         data = Data()
