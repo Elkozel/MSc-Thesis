@@ -1,4 +1,5 @@
 import comet_ml
+import torch
 from pytorch_lightning.loggers import CometLogger
 from transforms.AddInOutDegree import AddInOutDegree
 from transforms.RemoveSelfLoops import RemoveSelfLoops
@@ -41,6 +42,9 @@ if __name__ == '__main__':
         datamodule.node_features,
         datamodule.node_features * 3,
         dropout_rate = 0.0)
+    
+    # If we train on tensor cores as well
+    torch.set_float32_matmul_precision('high')
 
     early_stop_callback = EarlyStopping(monitor="val_loss", mode="min", verbose=True, check_on_train_epoch_end=False)
     trainer = L.Trainer(max_epochs = 50, profiler="simple", logger=comet_logger)

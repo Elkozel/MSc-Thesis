@@ -11,6 +11,7 @@ from transforms.EnrichHost import EnrichHost
 from torch.utils.data import random_split
 from torch.utils.data import ConcatDataset
 from torch_geometric.data import Data, Dataset, DataLoader
+from torch_geometric.data.batch import Batch
 import lightning as L
 
 
@@ -86,20 +87,18 @@ class UFW22L(L.LightningDataModule):
         "Resource Development": 10
     }
     
-    def __init__(self, data_dir, bin_size = 20, dataset_name = "UFW22", transforms = [], train_split = [0, 2649600], val_split = [4719500, 4872400], test_split = [4925700, 5552200], rnn_window = 30):
+    def __init__(self, data_dir, bin_size = 20, batch_size = 32, dataset_name = "UFW22", transforms = [], rnn_window = 30):
         super().__init__()
         self.data_dir = data_dir
         self.data_file = os.path.join(data_dir, "data.pkl")
         self.hostmap_file = os.path.join(data_dir, "hostmap.pkl")
         self.bin_size = bin_size
+        self.batch_size = batch_size
         self.dataset_name = dataset_name
         self.transforms = transforms
-        self.train_split = train_split
-        self.val_split = val_split
-        self.test_split = test_split
         self.rnn_window = rnn_window
 
-        self.save_hyperparameters("dataset_name", "train_split", "val_split", "test_split", "rnn_window")
+        self.save_hyperparameters()
         self.node_features = 6
         self.edge_features = 0
     
@@ -133,7 +132,6 @@ class UFW22L(L.LightningDataModule):
             
         pbar.set_description(f"Enriching nodemap")
         hostmap = pd.DataFrame([EnrichHost.enrich_host(host, id) for id, host in enumerate(all_hosts)])
-        hostmap = hostmap.set_index('ip')['host_id']
         pbar.update(1)
 
         pbar.set_description(f"Saving hostmap")
@@ -146,11 +144,12 @@ class UFW22L(L.LightningDataModule):
         df, file, min_time, hostmap, position = args
         with tqdm(total=4, desc=f"Preparing file {file}", position=position) as pbar:
             pbar.set_description(f"Applying hostmap")
-            def apply_hostmap(df: pd.DataFrame):
+            def apply_hostmap(df: pd.DataFrame, hostmap: pd.DataFrame):
+                hostmap = hostmap.set_index("ip")["host_id"]
                 df['src_ip_id'] = df['src_ip_zeek'].map(hostmap)
                 df['dest_ip_id'] = df['dest_ip_zeek'].map(hostmap)
                 return df
-            df = apply_hostmap(df)
+            df = apply_hostmap(df, hostmap)
             pbar.update(1)
             
             # Fixing time
@@ -180,7 +179,7 @@ class UFW22L(L.LightningDataModule):
             return
         
         # Download files
-        with ThreadPool(11) as pool:
+        with ThreadPool(8) as pool:
             args = [(url, pos) for pos, url in enumerate(self.download_data, 1)]
             results = pool.map(self.download, args)
 
@@ -190,7 +189,7 @@ class UFW22L(L.LightningDataModule):
         min_time = float(all_df['ts'].min())
 
         # Additional processing of the data
-        with ThreadPool(11) as pool:
+        with ThreadPool(8) as pool:
             all_df_zip = zip(results, self.download_data)
             args = [(df, url["file"], min_time, hostmap, pos) for pos, (df, url) in enumerate(all_df_zip, 1)]
             pool.map(self.additional_processing, args)
@@ -245,53 +244,35 @@ class UFW22L(L.LightningDataModule):
         # logger.info(f"Transforming data")
         data_binned = list(map(self.transform_data, data_binned))
 
-        # logger.info(f"Creating split")
-        # generator = torch.Generator().manual_seed(42)
-        # datasets = random_split(dataset, [0.6, 0.25, 0.15], generator=generator)
+        # logger.info(f"Creating batches")
+        batches = [Batch.from_data_list(data_binned[i:i+self.batch_size]) for i in range(0, len(data), self.batch_size)]
 
-        return data_binned, [], []
+        return batches
         
     def setup(self, stage: str):
         logger.info("Load hostmap")
         hostmap = pd.read_pickle(os.path.join(self.data_dir, self.hostmap_file))
         logger.info("Loading datafiles")
         args = [(hostmap, download_link["file"]) for download_link in self.download_data]
-        datasets = thread_map(lambda x: self.setup_df(*x), args, max_workers=11)  # adjust max_workers as needed
+        batches = thread_map(lambda x: self.setup_df(*x), args, max_workers=8)
+        def flatten(xss):
+            return [x for xs in xss for x in xs]
+        batches = flatten(batches)
+        generator = torch.Generator().manual_seed(42)
+        train, val, test  = random_split(batches, [0.6, 0.25, 0.15], generator=generator)
 
-        train, val, test = list(zip(*datasets))
-
-        self.train_data = ConcatDataset(train)
-        self.val_data = ConcatDataset(val)
-        self.test_data = ConcatDataset(test)
+        self.train_data = train
+        self.val_data = val
+        self.test_data = test
     
     def train_dataloader(self):
-        return DataLoader(self.train_data)
+        return self.train_data
     
     def val_dataloader(self):
-        return DataLoader(self.val_data)
+        return self.val_data
     
     def test_dataloader(self):
-        return DataLoader(self.test_data)
-    
-class MovingWindowDataset(Dataset):
-    def __init__(self, data, window_size):
-        self.data = data
-        self.window_size = window_size
-
-    def __len__(self):
-        return max(len(self.data) - self.window_size + 1, 0)
-    
-    def gen_item(self, idx: int):
-        x = self.data[idx : idx + self.window_size]
-        y = self.data[idx + self.window_size]
-        return x, y
-
-    def __getitem__(self, idx):
-        if torch.is_tensor(idx):
-            idx = idx.tolist()
-            return [self.gen_item(id) for id in idx]
-        
-        return self.gen_item(idx)
+        return self.test_data
 
 if __name__ == "__main__":
     DATASET_DIR = "/data/datasets/UWF22"

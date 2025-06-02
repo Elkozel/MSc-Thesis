@@ -130,7 +130,7 @@ class LitFullModel(L.LightningModule):
         total_acc = 0
             
         for i in range(num_windows):
-            to_idx = i + self.window_size
+            to_idx = i + self.hparams.rnn_window_size
             x_graphs = batch.index_select(slice(i, to_idx))
             y_graph = batch.get_example(to_idx)
 
@@ -148,7 +148,7 @@ class LitFullModel(L.LightningModule):
             labels = torch.cat([
                 torch.ones(positive_edges.size(1)),
                 torch.zeros(negative_edges.size(1))
-            ])
+            ]).to(self.device)
 
             # Grab scores and calculate metrics
             scores = self(x_graphs, edge_pairs)
@@ -158,8 +158,8 @@ class LitFullModel(L.LightningModule):
             total_loss += loss
             total_acc += acc
 
-        avg_loss = total_loss / len(num_windows)
-        avg_acc = total_acc / len(num_windows)
+        avg_loss = total_loss / num_windows
+        avg_acc = total_acc / num_windows
         
         # Logging
         self.log("train_loss", avg_loss, on_epoch=True)
@@ -169,94 +169,99 @@ class LitFullModel(L.LightningModule):
     
     def validation_step(self, batch, batch_idx):
         """Validates the model on one batch of temporal graphs."""
-        x_graphs, y_graph = batch
-
-        # Sometimes, validation could have redteam activity, so we check on that as well
-        redteam_mask = y_graph.y.squeeze() == 1
-        red_team_edges = y_graph.edge_index[:, redteam_mask]
+        num_windows = batch.num_graphs - (self.rnn_window + 1)
         
-        if red_team_edges.size(1) > 0:
-            red_team_labels = torch.zeros(red_team_edges.size(1), device=self.device)
+        if num_windows < 1:
+            print("Validation batch did not have enough")
             
-            red_team_pred = self(x_graphs, red_team_edges)
-            red_team_acc = self.binary_acc(red_team_pred, red_team_labels)
+        total_loss = 0
+        total_acc = 0
             
-            self.log("val_redteam", red_team_acc)
+        for i in range(num_windows):
+            to_idx = i + self.hparams.rnn_window_size
+            x_graphs = batch.index_select(slice(i, to_idx))
+            y_graph = batch.get_example(to_idx)
 
-        # Positive and negative edge sampling
-        positive_mask = y_graph.y.squeeze() == 0
-        positive_edges = y_graph.edge_index[:, positive_mask]
-        negative_edges = negative_sampling(
-            edge_index=y_graph.edge_index,
-            num_nodes=y_graph.num_nodes,
-            num_neg_samples=positive_edges.size(1)
-        )
 
-        edge_pairs = torch.cat([positive_edges, negative_edges], dim=1).to(self.device)
-        labels = torch.cat([
-            torch.ones(positive_edges.size(1)),
-            torch.zeros(negative_edges.size(1))
-        ])
-        randomize_edges = torch.randperm(edge_pairs.size(1))
-        edge_pairs = edge_pairs[:, randomize_edges]
-        labels = labels[randomize_edges]
+            # Positive and negative edge sampling
+            positive_mask = y_graph.y.squeeze() == 0
+            positive_edges = y_graph.edge_index[:, positive_mask]
+            negative_edges = negative_sampling(
+                edge_index=y_graph.edge_index,
+                num_nodes=y_graph.num_nodes,
+                num_neg_samples=max(positive_edges.size(1), 20)
+            )
 
-        # Grab scores and calculate metrics
-        scores = self(x_graphs, edge_pairs)
-        loss = F.binary_cross_entropy_with_logits(scores, labels.float().to(self.device))
-        acc = self.binary_acc(scores, labels.int().to(self.device))
+            edge_pairs = torch.cat([positive_edges, negative_edges], dim=1)
+            labels = torch.cat([
+                torch.ones(positive_edges.size(1)),
+                torch.zeros(negative_edges.size(1))
+            ]).to(self.device)
 
+            # Grab scores and calculate metrics
+            scores = self(x_graphs, edge_pairs)
+            loss = F.binary_cross_entropy_with_logits(scores, labels.float())
+            acc = self.binary_acc(scores, labels.int())
+            
+            total_loss += loss
+            total_acc += acc
+
+        avg_loss = total_loss / num_windows
+        avg_acc = total_acc / num_windows
+        
         # Logging
-        self.log("val_loss", loss, on_epoch=True)
-        self.log("val_acc", acc, on_epoch=True)
+        self.log("val_loss", avg_loss, on_epoch=True)
+        self.log("val_acc", avg_acc, on_epoch=True)
 
-        return loss
+        return avg_loss
     
     def test_step(self, batch: tuple[list[Data], Data], batch_idx):
         """Validates the model on one batch of temporal graphs."""
-        x_graphs, y_graph = batch
+        num_windows = batch.num_graphs - (self.rnn_window + 1)
         
-        # For testing, we also need to see if red team activities will be detected
-        redteam_mask = y_graph.y.squeeze() == 1
-        red_team_edges = y_graph.edge_index[:, redteam_mask]
+        if num_windows < 1:
+            print("Validation batch did not have enough")
+            
+        total_loss = 0
+        total_acc = 0
+            
+        for i in range(num_windows):
+            to_idx = i + self.rnn_window_size
+            x_graphs = batch.index_select(slice(i, to_idx))
+            y_graph = batch.get_example(to_idx)
+
+
+            # Positive and negative edge sampling
+            positive_mask = y_graph.y.squeeze() == 0
+            positive_edges = y_graph.edge_index[:, positive_mask]
+            negative_edges = negative_sampling(
+                edge_index=y_graph.edge_index,
+                num_nodes=y_graph.num_nodes,
+                num_neg_samples=max(positive_edges.size(1), 20)
+            )
+
+            edge_pairs = torch.cat([positive_edges, negative_edges], dim=1)
+            labels = torch.cat([
+                torch.ones(positive_edges.size(1)),
+                torch.zeros(negative_edges.size(1))
+            ]).to(self.device)
+
+            # Grab scores and calculate metrics
+            scores = self(x_graphs, edge_pairs)
+            loss = F.binary_cross_entropy_with_logits(scores, labels.float())
+            acc = self.binary_acc(scores, labels.int())
+            
+            total_loss += loss
+            total_acc += acc
+
+        avg_loss = total_loss / num_windows
+        avg_acc = total_acc / num_windows
         
-        self.log("test_size", red_team_edges.size(1))
-        if red_team_edges.size(1) > 0:
-            red_team_labels = torch.zeros(red_team_edges.size(1))
-            
-            red_team_pred = self(x_graphs, red_team_edges)
-            red_team_acc = self.binary_acc(red_team_pred, red_team_labels)
-            
-            self.log("test_redteam", red_team_acc)
-
-        # Positive and negative edge sampling
-        positive_mask = y_graph.y.squeeze() == 0
-        positive_edges = y_graph.edge_index[:, positive_mask]
-        negative_edges = negative_sampling(
-            edge_index=y_graph.edge_index,
-            num_nodes=y_graph.num_nodes,
-            num_neg_samples=positive_edges.size(1)
-        )
-
-        edge_pairs = torch.cat([positive_edges, negative_edges], dim=1)
-        labels = torch.cat([
-            torch.ones(positive_edges.size(1)),
-            torch.zeros(negative_edges.size(1))
-        ])
-        randomize_edges = torch.randperm(edge_pairs.size(1))
-        edge_pairs = edge_pairs[:, randomize_edges]
-        labels = labels[randomize_edges]
-
-        # Grab scores and calculate metrics
-        scores = self(x_graphs, edge_pairs)
-        loss = F.binary_cross_entropy_with_logits(scores, labels.float())
-        acc = self.binary_acc(scores, labels.int())
-
         # Logging
-        self.log("test_loss", loss, on_epoch=True)
-        self.log("test_acc", acc, prog_bar=True, on_epoch=True)
+        self.log("test_loss", avg_loss, on_epoch=True)
+        self.log("test_acc", avg_acc, prog_bar=True, on_epoch=True)
 
-        return loss
+        return avg_loss
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=1e-3)
