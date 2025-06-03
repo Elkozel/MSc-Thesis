@@ -218,7 +218,12 @@ class UFW22L(L.LightningDataModule):
     def bin_data(self, df_data: pd.DataFrame, bins, data: Data):
         # Cut the data into bins
         df_data["bin"] = pd.cut(df_data["ts"], bins, labels=False)
-        bin_ranges = df_data.groupby("bin").apply(lambda g: (g.index[0], g.index[-1] + 1)).to_dict()
+        bin_ranges = df_data.groupby("bin").apply(
+            lambda g: pd.Series({
+                "start": g.index[0],
+                "end": g.index[-1] + 1
+            })
+        ).to_dict(orient="index")
         
         # Generate bins
         for bin_id, (start_idx, end_idx) in bin_ranges.items():
