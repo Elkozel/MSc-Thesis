@@ -72,5 +72,8 @@ maps.bson
 .comet.config
 .cometml-runs
 
+# Pytorch lightning
+lightning_logs/
+
 # Pytorch checkpoints
 *.ckpt
