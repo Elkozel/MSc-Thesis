@@ -10,7 +10,8 @@ class EnrichHost(BaseTransform):
         super().__init__()
         self.col_id = col_id
 
-    def enrich_host(host, host_id):
+    @staticmethod
+    def enrich_host(host: str, host_id: int):
         try:
             ip_obj = ipaddress.ip_address(host)
             return {

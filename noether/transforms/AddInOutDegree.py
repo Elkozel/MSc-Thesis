@@ -19,7 +19,7 @@ class AddInOutDegree(BaseTransform):
             out_degree = degree(edge_index[1], store.num_nodes).unsqueeze(1)
 
             store = torch.cat([
-                store,
+                store.x,
                 in_degree,
                 out_degree
             ], dim=1)

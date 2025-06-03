@@ -90,7 +90,7 @@ class LitFullModel(L.LightningModule):
 
         self.binary_acc = torchmetrics.classification.BinaryAccuracy(threshold=binary_threshold)
 
-        self.rnn_window = rnn_window_size
+        self.rnn_window_size = rnn_window_size
         self.model_name = model_name
         self.binary_threshold = binary_threshold
 
@@ -121,7 +121,7 @@ class LitFullModel(L.LightningModule):
 
     def training_step(self, batch: Batch, batch_idx):
         """Trains the model on one batch of temporal graphs."""
-        num_windows = batch.num_graphs - (self.rnn_window + 1)
+        num_windows = batch.num_graphs - (self.rnn_window_size + 1)
         
         if num_windows < 1:
             print("Training batch did not have enough")
@@ -130,7 +130,7 @@ class LitFullModel(L.LightningModule):
         total_acc = 0
             
         for i in range(num_windows):
-            to_idx = i + self.hparams.rnn_window_size
+            to_idx = i + self.rnn_window_size
             x_graphs = batch.index_select(slice(i, to_idx))
             y_graph = batch.get_example(to_idx)
 
@@ -167,9 +167,9 @@ class LitFullModel(L.LightningModule):
 
         return avg_loss
     
-    def validation_step(self, batch, batch_idx):
+    def validation_step(self, batch: Batch, batch_idx):
         """Validates the model on one batch of temporal graphs."""
-        num_windows = batch.num_graphs - (self.rnn_window + 1)
+        num_windows = batch.num_graphs - (self.rnn_window_size + 1)
         
         if num_windows < 1:
             print("Validation batch did not have enough")
@@ -178,7 +178,7 @@ class LitFullModel(L.LightningModule):
         total_acc = 0
             
         for i in range(num_windows):
-            to_idx = i + self.hparams.rnn_window_size
+            to_idx = i + self.rnn_window_size
             x_graphs = batch.index_select(slice(i, to_idx))
             y_graph = batch.get_example(to_idx)
 
@@ -215,9 +215,9 @@ class LitFullModel(L.LightningModule):
 
         return avg_loss
     
-    def test_step(self, batch: tuple[list[Data], Data], batch_idx):
+    def test_step(self, batch: Batch, batch_idx):
         """Validates the model on one batch of temporal graphs."""
-        num_windows = batch.num_graphs - (self.rnn_window + 1)
+        num_windows = batch.num_graphs - (self.rnn_window_size + 1)
         
         if num_windows < 1:
             print("Validation batch did not have enough")
