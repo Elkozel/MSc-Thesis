@@ -3,6 +3,7 @@ import os
 import logging
 from random import randrange
 import time
+from typing import Literal
 import torch
 from tqdm import tqdm
 from tqdm.contrib.concurrent import thread_map, process_map
@@ -234,10 +235,7 @@ class UFW22L(L.LightningDataModule):
                 x=data.x
             )
         
-    def setup_df(self, hostmap, filename):
-        # logger.info(f"Load data")
-        df: pd.DataFrame = pd.read_pickle(os.path.join(self.data_dir, filename))
-
+    def split_data(self, hostmap, df):
         # logger.info(f"Making Data from df")
         data = self.df_to_data(df, hostmap)
 
@@ -247,12 +245,16 @@ class UFW22L(L.LightningDataModule):
         data_binned = list(self.bin_data(df, range(from_ts, to_ts, self.bin_size), data))
 
         # logger.info(f"Transforming data")
-        data_binned = list(map(self.transform_data, data_binned))
+        num_batches = len(range(0, len(data_binned), self.batch_size))
+        generator = torch.Generator().manual_seed(42)
+        idx = torch.arange(0, num_batches)
+        train, val, test = random_split(idx, [0.6, 0.25, 0.15], generator=generator)
 
-        # logger.info(f"Creating batches")
-        batches = [Batch.from_data_list(data_binned[i:i+self.batch_size]) for i in range(0, len(data), self.batch_size)]
-
-        return batches
+        batch_mask = torch.zeros(num_batches)
+        batch_mask[val] = 1
+        batch_mask[test] = 2
+        
+        return batch_mask
         
     def setup(self, stage: str):
         logger.info("Load hostmap")
@@ -269,6 +271,29 @@ class UFW22L(L.LightningDataModule):
         self.train_data = train
         self.val_data = val
         self.test_data = test
+
+    def get_batch(self, hostmap, filename, mask, stage: Literal['train', 'val', 'test']):
+        # logger.info(f"Load data")
+        df: pd.DataFrame = pd.read_pickle(os.path.join(self.data_dir, filename))
+
+        # logger.info(f"Making Data from df")
+        data = self.df_to_data(df, hostmap)
+
+        # logger.info(f"Binning data")
+        from_ts = int(df["ts"].min())
+        to_ts = int(df["ts"].max())+1
+        data_binned = list(self.bin_data(df, range(from_ts, to_ts, self.bin_size), data))
+
+        # Remove data, which is not needed
+        data_binned = data_binned[mask]
+
+        # logger.info(f"Transforming data")
+        data_binned = list(map(self.transform_data, data_binned))
+
+        # logger.info(f"Creating batches")
+        batches = [Batch.from_data_list(data_binned[i:i+self.batch_size]) for i in range(0, len(data), self.batch_size)]
+
+        return batches
     
     def train_dataloader(self):
         return self.train_data
