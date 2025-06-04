@@ -130,9 +130,10 @@ class LitFullModel(L.LightningModule):
         
         if num_windows < 1:
             print("Training batch did not have enough")
+            return torch.tensor(0.0, requires_grad=True).to(self.device)
             
-        total_loss = torch.tensor(0.0).to(self.device)
-        total_acc = torch.tensor(0.0).to(self.device)
+        total_loss = torch.tensor(0.0, requires_grad=True).to(self.device)
+        total_acc = torch.tensor(0.0, requires_grad=True).to(self.device)
         features = [self.gnn(data.x, data.edge_index) for data in batch.to_data_list()]
         features = torch.stack(features)
             
@@ -171,6 +172,10 @@ class LitFullModel(L.LightningModule):
         # Logging
         self.log("train_loss", avg_loss, on_epoch=True)
         self.log("train_acc", avg_acc, prog_bar=True, on_epoch=True)
+
+        # Cleanup
+        del features
+        torch.cuda.empty_cache()
 
         return avg_loss
     
