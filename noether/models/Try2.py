@@ -131,8 +131,8 @@ class LitFullModel(L.LightningModule):
         if num_windows < 1:
             print("Training batch did not have enough")
             
-        total_loss = 0.0
-        total_acc = 0.0
+        total_loss = torch.tensor(0.0).to(self.device)
+        total_acc = torch.tensor(0.0).to(self.device)
         features = [self.gnn(data.x, data.edge_index) for data in batch.to_data_list()]
         features = torch.stack(features)
             
