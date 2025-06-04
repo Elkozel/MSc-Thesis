@@ -95,7 +95,7 @@ class UFW22L(L.LightningDataModule):
         "Resource Development": 10
     }
     
-    def __init__(self, data_dir, bin_size = 20, batch_size = 32, dataset_name = "UFW22", transforms = [], rnn_window = 30):
+    def __init__(self, data_dir, bin_size = 20, batch_size = 50, dataset_name = "UFW22", transforms = [], rnn_window = 30):
         super().__init__()
         self.data_dir = data_dir
         self.data_file = os.path.join(data_dir, "data.pkl")
@@ -363,16 +363,18 @@ class UFW22L(L.LightningDataModule):
             data = self.df_to_data(df, self.hostmap)
             data_binned = list(self.bin_data(df, range(file_stats["start_ts"], file_stats["end_ts"], self.bin_size), data))
             data_transformed: List[BaseData] = list(map(self.transform_data, data_binned))
-            batches = [Batch.from_data_list(data_transformed[i:i+self.batch_size]) for i in range(0, len(data_transformed), self.batch_size)]
+            for batch_num, batch_i in enumerate(range(0, len(data_transformed), self.batch_size)):
+                batch = Batch.from_data_list(data_transformed[batch_i:batch_i+self.batch_size])
+                stage_num = 0
+                if stage == "val":
+                    stage_num = 1
+                elif stage == "test":
+                    stage_num = 2
+                if bin_mask[batch_num] != stage_num:
+                    continue
 
-            stage_num = 0
-            if stage == "val":
-                stage_num = 1
-            elif stage == "test":
-                stage_num = 2
-            stage_batches = [batch for batch_num, batch in enumerate(batches) if bin_mask[batch_num] == stage_num]
-
-            for batch in stage_batches:
+                if batch.num_graphs <= self.rnn_window:
+                    continue
                 yield batch
 
     def train_dataloader(self):
