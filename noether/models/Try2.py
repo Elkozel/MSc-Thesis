@@ -1,3 +1,5 @@
+from ast import List
+from typing import Union
 import torch
 import torchmetrics
 import torch.nn as nn
@@ -97,14 +99,17 @@ class LitFullModel(L.LightningModule):
         self.save_hyperparameters()
 
 
-    def forward(self, graph_sequence, edge_pairs):
-        # Generate the features at each timestamp
+    def forward(self, graph_sequence: Union[list[Data], torch.Tensor], edge_pairs):
+        # Generate the features at each timestamp if not already computed
         # shape (timestamp, nodes, features)
-        graph_features = [self.gnn(data.x, data.edge_index) for data in graph_sequence]
+        if isinstance(graph_sequence, torch.Tensor):
+            graph_features = graph_sequence
+        else:
+            graph_features = [self.gnn(data.x, data.edge_index) for data in graph_sequence]
+            graph_features = torch.stack(graph_features)
 
         # Switch the order, so that each node is treated as a batch
         # shape (nodes, timestamp, features)
-        graph_features = torch.stack(graph_features)
         graph_features = graph_features.permute(1, 0, 2)
         rnn_output, _ = self.rnn(graph_features)
 
@@ -126,12 +131,14 @@ class LitFullModel(L.LightningModule):
         if num_windows < 1:
             print("Training batch did not have enough")
             
-        total_loss = 0
-        total_acc = 0
+        total_loss = 0.0
+        total_acc = 0.0
+        features = [self.gnn(data.x, data.edge_index) for data in batch.to_data_list()]
+        features = torch.stack(features)
             
         for i in range(num_windows):
             to_idx = i + self.rnn_window_size
-            x_graphs = batch.index_select(slice(i, to_idx))
+            x_features = features[i:to_idx]
             y_graph = batch.get_example(to_idx)
 
 
@@ -151,7 +158,7 @@ class LitFullModel(L.LightningModule):
             ]).to(self.device)
 
             # Grab scores and calculate metrics
-            scores = self(x_graphs, edge_pairs)
+            scores = self(x_features, edge_pairs)
             loss = F.binary_cross_entropy_with_logits(scores, labels.float())
             acc = self.binary_acc(scores, labels.int())
             
@@ -174,8 +181,8 @@ class LitFullModel(L.LightningModule):
         if num_windows < 1:
             print("Validation batch did not have enough")
             
-        total_loss = 0
-        total_acc = 0
+        total_loss = torch.tensor(0.0).to(self.device)
+        total_acc = torch.tensor(0.0).to(self.device)
             
         for i in range(num_windows):
             to_idx = i + self.rnn_window_size
@@ -222,8 +229,8 @@ class LitFullModel(L.LightningModule):
         if num_windows < 1:
             print("Validation batch did not have enough")
             
-        total_loss = 0
-        total_acc = 0
+        total_loss = torch.tensor(0.0).to(self.device)
+        total_acc = torch.tensor(0.0).to(self.device)
             
         for i in range(num_windows):
             to_idx = i + self.rnn_window_size
