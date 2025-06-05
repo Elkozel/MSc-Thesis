@@ -6,6 +6,7 @@ import requests
 import torch
 from tqdm import tqdm
 import pandas as pd
+from utils.SimpleBatch import SimpleBatch
 from transforms.EnrichHost import EnrichHost
 from torch.utils.data import random_split, TensorDataset
 from torch_geometric.data import Data
@@ -364,7 +365,7 @@ class UFW22L(L.LightningDataModule):
             data_binned = list(self.bin_data(df, range(file_stats["start_ts"], file_stats["end_ts"], self.bin_size), data))
             data_transformed: List[BaseData] = list(map(self.transform_data, data_binned))
             for batch_num, batch_i in enumerate(range(0, len(data_transformed), self.batch_size)):
-                batch = Batch.from_data_list(data_transformed[batch_i:batch_i+self.batch_size])
+                batch = SimpleBatch.from_list(data_transformed[batch_i:batch_i+self.batch_size])
                 stage_num = 0
                 if stage == "val":
                     stage_num = 1

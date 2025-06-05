@@ -9,6 +9,7 @@ from torch_geometric.nn import GATv2Conv
 from torch_geometric.utils import negative_sampling
 from torch_geometric.data import Data, Batch
 import torchmetrics.classification
+from utils.SimpleBatch import SimpleBatch
 
 
 class GNNEncoder(nn.Module):
@@ -124,7 +125,7 @@ class LitFullModel(L.LightningModule):
 
         return scores
 
-    def training_step(self, batch: Batch, batch_idx):
+    def training_step(self, batch: SimpleBatch, batch_idx):
         """Trains the model on one batch of temporal graphs."""
         num_windows = batch.num_graphs - (self.rnn_window_size + 1)
         
@@ -179,7 +180,7 @@ class LitFullModel(L.LightningModule):
 
         return avg_loss
     
-    def validation_step(self, batch: Batch, batch_idx):
+    def validation_step(self, batch: SimpleBatch, batch_idx):
         """Validates the model on one batch of temporal graphs."""
         num_windows = batch.num_graphs - (self.rnn_window_size + 1)
         
@@ -227,7 +228,7 @@ class LitFullModel(L.LightningModule):
 
         return avg_loss
     
-    def test_step(self, batch: Batch, batch_idx):
+    def test_step(self, batch: SimpleBatch, batch_idx):
         """Validates the model on one batch of temporal graphs."""
         num_windows = batch.num_graphs - (self.rnn_window_size + 1)
         
