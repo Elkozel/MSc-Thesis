@@ -1,6 +1,7 @@
 from multiprocessing.pool import ThreadPool
 import os
 import math
+import numpy as np
 import logging
 from typing import List, Literal
 import requests
@@ -78,6 +79,11 @@ class UFW22L(L.LightningDataModule):
         "SHR": 11,   # Responder sent SYN-ACK followed by FIN — no SYN from originator.
         "OTH": 12    # No SYN seen — just midstream traffic, possibly partial connection.
     }
+    conn_status_map = {
+        "started": 0,
+        "open": 1,
+        "closing": 2
+    }
     proto_map = {
         "icmp": 0,
         "tcp": 1,
@@ -97,6 +103,22 @@ class UFW22L(L.LightningDataModule):
         "Resource Development": 10
     }
     service_map = {
+        "None": 0,
+        "dns": 1,
+        "dhcp": 2,
+        "http": 3,
+        "ssl": 4,
+        "ntp": 5,
+        "radius": 6,
+        "smb": 7,
+        "gssapi,ntlm,smb": 8,
+        "smb,ntlm,gssapi": 9,
+        "gssapi": 10,
+        "krb_tcp": 11,
+        "ssh": 12,
+        "ftp": 13,
+        "smb,gssapi,ntlm": 14,
+        "gssapi,smb,ntlm": 15
     }
     
     def __init__(self, data_dir, bin_size = 20, batch_size = 350, dataset_name = "UFW22", transforms = [], rnn_window = 30):
@@ -208,6 +230,7 @@ class UFW22L(L.LightningDataModule):
             df["conn_state"] = df["conn_state"].map(self.conn_state_map)
             df["proto"] = df["proto"].map(self.proto_map)
             df["label_tactic"] = df["label_tactic"].map(self.tactic_map)
+            df["service"] = df["service"].map(self.service_map).fillna(0)
             pbar.update(1)
             
             # Step 3: Map IP addresses to unique host IDs using the provided hostmap
@@ -321,9 +344,55 @@ class UFW22L(L.LightningDataModule):
                 "valid",
         ]].to_numpy()).to(torch.float32)
         data.edge_index = torch.from_numpy(df[["src_ip_id", "dest_ip_id"]].to_numpy().T).to(torch.int64)
+        data.x = torch.from_numpy(df[[
+                "conn_status",
+                "src_port_zeek",
+                "dest_port_zeek",
+                "orig_bytes",
+                "orig_pkts",
+                "resp_bytes",
+                "resp_pkts",
+                "missed_bytes",
+                "local_orig",
+                "local_resp",
+                "duration",
+                "proto",
+                "service",
+                "conn_state"
+                # TODO: Add history
+        ]].astype(float).to_numpy()).to(torch.float32)
         data.y = torch.from_numpy(df["label_tactic"].to_numpy()).to(torch.int64)
 
         return data
+    
+    def account_for_duration(self, df: pd.DataFrame):
+        def expand(x):
+            duration = x["duration"]
+            end_ts = x["ts"]
+            start_ts = float(end_ts - duration)
+            
+            # Otherwise, determine how many adjustments will need to be made
+            all_ts = np.arange(start_ts, end_ts, self.bin_size)[:-1] # cut the last one (we already have the original event)
+            if all_ts.size < 1:
+                print("Welp")
+            all_ts = np.append(all_ts, end_ts) # add the original event
+
+            open_conn_states = ["open" for _ in range(all_ts.size - 2)]
+            all_conn_states = ["started"] + open_conn_states + ["closing"]
+
+            return pd.Series([all_ts, all_conn_states], index=['ts', 'conn_status'])
+        
+        df["conn_status"] = "closing"
+        df["ts"] = df["ts"].astype("object")
+        mask = (df["duration"] > self.bin_size)
+        df.loc[mask, ["ts", "conn_status"]] = df[mask].apply(expand, axis=1)
+        df = df.explode(["ts", "conn_status"])
+        df["conn_status"] = df["conn_status"].map(self.conn_status_map)
+        # Resort
+        df["ts"] = df["ts"].astype("int")
+        df = df.sort_values(by=['ts'])  # Sort records chronologically
+        df = df.reset_index(drop=True)  # Reset index after sorting
+        return df
 
     def transform_data(self, data: Data) -> Data:
         for transform in self.transforms:
@@ -368,6 +437,7 @@ class UFW22L(L.LightningDataModule):
             batch_mask = self.file_masks[pkl_file]
 
             df = pd.read_pickle(os.path.join(self.data_dir, pkl_file))
+            df = self.account_for_duration(df)
             data = self.df_to_data(df, self.hostmap)
             data_binned = list(self.bin_data(df, range(file_stats["start_ts"], file_stats["end_ts"], self.bin_size), data))
             data_transformed: List[BaseData] = list(map(self.transform_data, data_binned))
