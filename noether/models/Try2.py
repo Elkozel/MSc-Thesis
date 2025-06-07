@@ -170,8 +170,8 @@ class LitFullModel(L.LightningModule):
         avg_acc = total_acc / num_windows
         
         # Logging
-        self.log("train_loss", avg_loss, on_epoch=True)
-        self.log("train_acc", avg_acc, prog_bar=True, on_epoch=True)
+        self.log("train_loss", avg_loss, batch_size=batch.num_graphs, on_epoch=True)
+        self.log("train_acc", avg_acc, batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
 
         # Cleanup
         del features
@@ -221,8 +221,8 @@ class LitFullModel(L.LightningModule):
         avg_acc = total_acc / num_windows
         
         # Logging
-        self.log("val_loss", avg_loss, on_epoch=True)
-        self.log("val_acc", avg_acc, on_epoch=True)
+        self.log("val_loss", avg_loss, batch_size=batch.num_graphs, on_epoch=True)
+        self.log("val_acc", avg_acc, batch_size=batch.num_graphs, on_epoch=True)
 
         return avg_loss
     
@@ -268,8 +268,8 @@ class LitFullModel(L.LightningModule):
         avg_acc = total_acc / num_windows
         
         # Logging
-        self.log("test_loss", avg_loss, on_epoch=True)
-        self.log("test_acc", avg_acc, prog_bar=True, on_epoch=True)
+        self.log("test_loss", avg_loss, batch_size=batch.num_graphs, on_epoch=True)
+        self.log("test_acc", avg_acc, batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
 
         return avg_loss
 

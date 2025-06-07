@@ -1,5 +1,6 @@
 from multiprocessing.pool import ThreadPool
 import os
+import math
 import logging
 from typing import List, Literal
 import requests
@@ -98,8 +99,8 @@ class UFW22L(L.LightningDataModule):
     service_map = {
     }
     
-    def __init__(self, data_dir, bin_size = 20, batch_size = 50, dataset_name = "UFW22", transforms = [], rnn_window = 30):
-        super().__init__()
+    def __init__(self, data_dir, bin_size = 20, batch_size = 350, dataset_name = "UFW22", transforms = [], rnn_window = 30):
+        super().__init__()# 91697
         self.data_dir = data_dir
         self.data_file = os.path.join(data_dir, "data.pkl")
         self.hostmap_file = os.path.join(data_dir, "hostmap.pkl")
@@ -265,14 +266,15 @@ class UFW22L(L.LightningDataModule):
         end_ts = int(df["ts"].max())
 
         # Calculate number of time bins based on bin size
-        num_batches = len(range(start_ts, end_ts + 1, self.bin_size))
+        num_bins = len(range(start_ts, end_ts + 1, self.bin_size))
 
         # Store computed statistics in a dictionary associated with the file
         self.file_stats[pickle_file] = {
             "records": records,
             "start_ts": start_ts,
             "end_ts": end_ts,
-            "num_batches": num_batches
+            "num_bins": num_bins,
+            "num_batches": math.ceil(num_bins / self.batch_size)  # Number of batches is total bins divided by bin size
         }
 
         # Return statistics for the current file
@@ -339,10 +341,11 @@ class UFW22L(L.LightningDataModule):
         df_data["bin"] = pd.cut(df_data["ts"], bins, ordered=True, labels=False, right=False)
         bin_ranges = df_data.groupby("bin").apply(
             lambda g: pd.Series({
-                "bin": g["bin"].iloc[0],
+                "bin": g.name,
                 "start": g.index[0],
                 "end": g.index[-1] + 1
-            })
+            }),
+            include_groups=False  
         ).to_dict(orient="index")
         
         # Generate bins
@@ -362,7 +365,7 @@ class UFW22L(L.LightningDataModule):
         for file in self.download_data:
             pkl_file = file["pkl_file"]
             file_stats = self.file_stats[pkl_file]
-            bin_mask = self.file_masks[pkl_file]
+            batch_mask = self.file_masks[pkl_file]
 
             df = pd.read_pickle(os.path.join(self.data_dir, pkl_file))
             data = self.df_to_data(df, self.hostmap)
@@ -375,7 +378,7 @@ class UFW22L(L.LightningDataModule):
                     stage_num = 1
                 elif stage == "test":
                     stage_num = 2
-                if bin_mask[batch_num] != stage_num:
+                if batch_mask[batch_num] != stage_num:
                     continue
 
                 if batch.num_graphs <= self.rnn_window:
@@ -397,9 +400,14 @@ class UFW22L(L.LightningDataModule):
 class CustomBatchDataset(torch.utils.data.IterableDataset):
     def __init__(self, data_module, stage: Literal['train', 'val', 'test'], estimated_len: int = 0):
         self.data_module = data_module
-        self.stage = stage
-        self._length = int(sum([torch.sum(mask == 0).item() for mask in self.data_module.file_masks.values()]))  # Optional, safe default
+        self.stage = 0 if stage == "train" else 1 if stage == "val" else 2
+        self._length = self.calulate_length() if estimated_len == 0 else estimated_len
 
+    def calulate_length(self):
+        all_masks = list(self.data_module.file_masks.values())
+        total_length = torch.cat(all_masks)
+        return int(torch.sum(total_length == self.stage))
+    
     def __iter__(self):
         return self.data_module.batch_generator(self.stage)
 
