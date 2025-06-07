@@ -344,7 +344,7 @@ class UFW22L(L.LightningDataModule):
                 "valid",
         ]].to_numpy()).to(torch.float32)
         data.edge_index = torch.from_numpy(df[["src_ip_id", "dest_ip_id"]].to_numpy().T).to(torch.int64)
-        data.x = torch.from_numpy(df[[
+        data.edge_attr = torch.from_numpy(df[[
                 "conn_status",
                 "src_port_zeek",
                 "dest_port_zeek",
