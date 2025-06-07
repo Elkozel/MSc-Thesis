@@ -30,7 +30,7 @@ if __name__ == '__main__':
         RemoveSelfLoops(attr=["edge_attr", "edge_weight", "time", "y"]),
         AddInOutDegree()
     ]
-    DATASET_DIR = "D:\\Datasets\\UWF22"
+    DATASET_DIR = "/data/datasets/UWF22"
     datamodule = datasets[dataset_name](DATASET_DIR)
 
     models = {

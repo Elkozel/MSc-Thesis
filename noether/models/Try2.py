@@ -133,8 +133,8 @@ class LitFullModel(L.LightningModule):
             print("Training batch did not have enough")
             return torch.tensor(0.0, requires_grad=True).to(self.device)
             
-        total_loss = torch.tensor(0.0, requires_grad=True).to(self.device)
-        total_acc = torch.tensor(0.0, requires_grad=True).to(self.device)
+        total_loss = torch.tensor(0.0).to(self.device)
+        total_acc = torch.tensor(0.0).to(self.device)
         features = [self.gnn(data.x, data.edge_index) for data in batch.to_data_list()]
         features = torch.stack(features)
             
@@ -145,8 +145,7 @@ class LitFullModel(L.LightningModule):
 
 
             # Positive and negative edge sampling
-            positive_mask = y_graph.y.squeeze() == 0
-            positive_edges = y_graph.edge_index[:, positive_mask]
+            positive_edges = y_graph.edge_index
             negative_edges = negative_sampling(
                 edge_index=y_graph.edge_index,
                 num_nodes=y_graph.num_nodes,
@@ -197,8 +196,7 @@ class LitFullModel(L.LightningModule):
 
 
             # Positive and negative edge sampling
-            positive_mask = y_graph.y.squeeze() == 0
-            positive_edges = y_graph.edge_index[:, positive_mask]
+            positive_edges = y_graph.edge_index
             negative_edges = negative_sampling(
                 edge_index=y_graph.edge_index,
                 num_nodes=y_graph.num_nodes,
@@ -245,8 +243,7 @@ class LitFullModel(L.LightningModule):
 
 
             # Positive and negative edge sampling
-            positive_mask = y_graph.y.squeeze() == 0
-            positive_edges = y_graph.edge_index[:, positive_mask]
+            positive_edges = y_graph.edge_index
             negative_edges = negative_sampling(
                 edge_index=y_graph.edge_index,
                 num_nodes=y_graph.num_nodes,

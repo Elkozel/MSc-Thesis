@@ -95,6 +95,8 @@ class UFW22L(L.LightningDataModule):
         "Reconnaissance": 9,
         "Resource Development": 10
     }
+    service_map = {
+    }
     
     def __init__(self, data_dir, bin_size = 20, batch_size = 50, dataset_name = "UFW22", transforms = [], rnn_window = 30):
         super().__init__()
@@ -218,6 +220,7 @@ class UFW22L(L.LightningDataModule):
             df = df.rename(columns={"ts": "ts_abs"})  # Rename original timestamp to keep it
             df['ts'] = df['ts_abs'] - min_time  # Create new time column relative to min_time
             df = df.sort_values(by=['ts'])  # Sort records chronologically
+            df = df.reset_index(drop=True)  # Reset index after sorting
             pbar.update(1)
 
             # Step 5: Save the transformed DataFrame as a pickle file
@@ -333,9 +336,10 @@ class UFW22L(L.LightningDataModule):
         assert isinstance(data.y, torch.Tensor)
 
         # Cut the data into bins
-        df_data["bin"] = pd.cut(df_data["ts"], bins, labels=False)
+        df_data["bin"] = pd.cut(df_data["ts"], bins, ordered=True, labels=False, right=False)
         bin_ranges = df_data.groupby("bin").apply(
             lambda g: pd.Series({
+                "bin": g["bin"].iloc[0],
                 "start": g.index[0],
                 "end": g.index[-1] + 1
             })
@@ -343,8 +347,8 @@ class UFW22L(L.LightningDataModule):
         
         # Generate bins
         for bin_id, range in bin_ranges.items():
-            start_idx = range["start"]
-            end_idx = range["end"]
+            start_idx = int(range["start"])
+            end_idx = int(range["end"])
             yield Data(
                 time=data.time[start_idx:end_idx],
                 edge_index=data.edge_index[:, start_idx:end_idx],
