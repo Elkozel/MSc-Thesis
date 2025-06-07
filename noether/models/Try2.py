@@ -173,10 +173,6 @@ class LitFullModel(L.LightningModule):
         self.log("train_loss", avg_loss, batch_size=batch.num_graphs, on_epoch=True)
         self.log("train_acc", avg_acc, batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
 
-        # Cleanup
-        del features
-        torch.cuda.empty_cache()
-
         return avg_loss
     
     def validation_step(self, batch: SimpleBatch, batch_idx):
