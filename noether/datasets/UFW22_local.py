@@ -122,7 +122,7 @@ class UFW22L(L.LightningDataModule):
     }
     
     def __init__(self, data_dir, bin_size = 20, batch_size = 350, dataset_name = "UFW22", transforms = [], rnn_window = 30):
-        super().__init__()# 91697
+        super().__init__()
         self.data_dir = data_dir
         self.data_file = os.path.join(data_dir, "data.pkl")
         self.hostmap_file = os.path.join(data_dir, "hostmap.pkl")
