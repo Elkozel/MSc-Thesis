@@ -41,6 +41,7 @@ if __name__ == '__main__':
     model = models[model_name](
         datamodule.node_features,
         datamodule.node_features * 3,
+        out_classes = datamodule.num_classes,
         dropout_rate = 0.0)
     
     # If we train on tensor cores as well

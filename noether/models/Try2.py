@@ -1,6 +1,7 @@
 from ast import List
 from typing import Union
 import torch
+import warnings
 import torchmetrics
 import torch.nn as nn
 import lightning as L
@@ -47,13 +48,26 @@ class RNNEncoder(nn.Module):
         output, final_state = self.rnn(x_seq)
         return output, final_state  # optional depending on decoder
     
-class BilinearDecoder(nn.Module):
+class LinkPredictor(nn.Module):
     def __init__(self, in_dim, out_dim):
         super().__init__()
         self.bilinear = nn.Bilinear(in_dim, in_dim, out_dim)
 
     def forward(self, z_src, z_dst):
         return self.bilinear(z_src, z_dst).squeeze(-1)
+    
+class LinkTypeClassifier(nn.Module):
+    def __init__(self, input_dim, num_classes):
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(input_dim * 2, input_dim),
+            nn.ReLU(),
+            nn.Linear(input_dim, num_classes)
+        )
+
+    def forward(self, h_src, h_dst):
+        h_concat = torch.cat([h_src, h_dst], dim=-1)
+        return self.mlp(h_concat)  # No softmax; use CrossEntropyLoss
 
 class LitFullModel(L.LightningModule):
     """
@@ -79,23 +93,29 @@ class LitFullModel(L.LightningModule):
         in_channels,
         hidden_channels,
         dropout_rate,
-        out_classes=1,
-        rnn_window_size=30,
-        rnn_num_layers=1,
-        binary_threshold=0.5,
+        out_classes = 1,
+        rnn_window_size = 30,
+        rnn_num_layers = 1,
+        binary_threshold = 0.5,
+        negative_edge_sampling_min = 20,
+        pred_alpha = 0.8,
         model_name="Try2"
     ):
         super().__init__()
 
         self.gnn = GNNEncoder(in_channels, hidden_channels, dropout_rate)
         self.rnn = RNNEncoder(hidden_channels, rnn_num_layers)
-        self.decoder = BilinearDecoder(hidden_channels, out_classes)
+        self.link_pred = LinkPredictor(hidden_channels, 1)
+        self.link_classifier = LinkTypeClassifier(hidden_channels, out_classes)
 
-        self.binary_acc = torchmetrics.classification.BinaryAccuracy(threshold=binary_threshold)
+        self.link_predict_acc = torchmetrics.classification.BinaryAccuracy(threshold=binary_threshold)
+        self.link_class_acc = torchmetrics.Accuracy(task="multiclass", num_classes=out_classes)
 
         self.rnn_window_size = rnn_window_size
         self.model_name = model_name
         self.binary_threshold = binary_threshold
+        self.negative_edge_sampling_min = negative_edge_sampling_min
+        self.pred_alpha = pred_alpha
 
         self.save_hyperparameters()
 
@@ -121,20 +141,23 @@ class LitFullModel(L.LightningModule):
         # Generate the scores
         src = edge_pairs[0]
         dst = edge_pairs[1]
-        scores = self.decoder(predicted_embeddings[src], predicted_embeddings[dst])  # shape [num_edges]
+        link_pred_scores = self.link_pred(predicted_embeddings[src], predicted_embeddings[dst])  # shape [num_edges]
+        link_class_logits = self.link_classifier(predicted_embeddings[src], predicted_embeddings[dst]) # shape [num_edges]
 
-        return scores
+        return link_pred_scores, link_class_logits
 
     def training_step(self, batch: SimpleBatch, batch_idx):
         """Trains the model on one batch of temporal graphs."""
         num_windows = batch.num_graphs - (self.rnn_window_size + 1)
         
         if num_windows < 1:
-            print("Training batch did not have enough")
+            warnings.warn(f"Training batch ID: {batch_idx} (size {batch.num_graphs}) is not enough \
+                          for a full window of {self.rnn_window_size}")
             return torch.tensor(0.0, requires_grad=True).to(self.device)
             
         total_loss = torch.tensor(0.0).to(self.device)
-        total_acc = torch.tensor(0.0).to(self.device)
+        total_pred_acc = torch.tensor(0.0).to(self.device)
+        total_class_acc = torch.tensor(0.0).to(self.device)
         features = [self.gnn(data.x, data.edge_index) for data in batch.to_data_list()]
         features = torch.stack(features)
             
@@ -149,8 +172,9 @@ class LitFullModel(L.LightningModule):
             negative_edges = negative_sampling(
                 edge_index=y_graph.edge_index,
                 num_nodes=y_graph.num_nodes,
-                num_neg_samples=max(positive_edges.size(1), 20)
+                num_neg_samples=max(positive_edges.size(1), self.negative_edge_sampling_min)
             )
+            edge_labels = y_graph.y
 
             edge_pairs = torch.cat([positive_edges, negative_edges], dim=1)
             labels = torch.cat([
@@ -158,20 +182,35 @@ class LitFullModel(L.LightningModule):
                 torch.zeros(negative_edges.size(1))
             ]).to(self.device)
 
-            # Grab scores and calculate metrics
-            scores = self(x_features, edge_pairs)
-            loss = F.binary_cross_entropy_with_logits(scores, labels.float())
-            acc = self.binary_acc(scores, labels.int())
+            # Grab scores
+            link_pred, link_class = self(x_features, edge_pairs)
+
+            # Calculate the loss for link prediction
+            pred_loss = F.binary_cross_entropy_with_logits(link_pred, labels.float())
+
+            # Mask the score
+            link_class = link_class[labels.bool()]
+            if positive_edges.any():
+                class_loss = F.cross_entropy(link_class, edge_labels.long())
+            else:
+                class_loss = torch.tensor(0.0, device=self.device)
+
+            loss = pred_loss + self.pred_alpha * class_loss
+            pred_acc = self.link_predict_acc(link_pred, labels.int())
+            class_acc = self.link_class_acc(link_class, edge_labels.int())
             
             total_loss += loss
-            total_acc += acc
+            total_pred_acc += pred_acc
+            total_class_acc += class_acc
 
         avg_loss = total_loss / num_windows
-        avg_acc = total_acc / num_windows
+        avg_pred_acc = total_pred_acc / num_windows
+        avg_class_acc = total_class_acc / num_windows
         
         # Logging
         self.log("train_loss", avg_loss, batch_size=batch.num_graphs, on_epoch=True)
-        self.log("train_acc", avg_acc, batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
+        self.log("train_pred_acc", avg_pred_acc, batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
+        self.log("train_class_acc", avg_class_acc, batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
 
         return avg_loss
     
@@ -180,14 +219,19 @@ class LitFullModel(L.LightningModule):
         num_windows = batch.num_graphs - (self.rnn_window_size + 1)
         
         if num_windows < 1:
-            print("Validation batch did not have enough")
+            warnings.warn(f"Validation batch ID: {batch_idx} (size {batch.num_graphs}) is not enough \
+                          for a full window of {self.rnn_window_size}")
+            return torch.tensor(0.0, requires_grad=True).to(self.device)
             
         total_loss = torch.tensor(0.0).to(self.device)
-        total_acc = torch.tensor(0.0).to(self.device)
+        total_pred_acc = torch.tensor(0.0).to(self.device)
+        total_class_acc = torch.tensor(0.0).to(self.device)
+        features = [self.gnn(data.x, data.edge_index) for data in batch.to_data_list()]
+        features = torch.stack(features)
             
         for i in range(num_windows):
             to_idx = i + self.rnn_window_size
-            x_graphs = batch.index_select(slice(i, to_idx))
+            x_features = features[i:to_idx]
             y_graph = batch.get_example(to_idx)
 
 
@@ -196,8 +240,9 @@ class LitFullModel(L.LightningModule):
             negative_edges = negative_sampling(
                 edge_index=y_graph.edge_index,
                 num_nodes=y_graph.num_nodes,
-                num_neg_samples=max(positive_edges.size(1), 20)
+                num_neg_samples=max(positive_edges.size(1), self.negative_edge_sampling_min)
             )
+            edge_labels = y_graph.y
 
             edge_pairs = torch.cat([positive_edges, negative_edges], dim=1)
             labels = torch.cat([
@@ -205,20 +250,35 @@ class LitFullModel(L.LightningModule):
                 torch.zeros(negative_edges.size(1))
             ]).to(self.device)
 
-            # Grab scores and calculate metrics
-            scores = self(x_graphs, edge_pairs)
-            loss = F.binary_cross_entropy_with_logits(scores, labels.float())
-            acc = self.binary_acc(scores, labels.int())
+            # Grab scores
+            link_pred, link_class = self(x_features, edge_pairs)
+
+            # Calculate the loss for link prediction
+            pred_loss = F.binary_cross_entropy_with_logits(link_pred, labels.float())
+
+            # Mask the score
+            link_class = link_class[labels.bool()]
+            if positive_edges.any():
+                class_loss = F.cross_entropy(link_class, edge_labels.long())
+            else:
+                class_loss = torch.tensor(0.0, device=self.device)
+
+            loss = pred_loss + self.pred_alpha * class_loss
+            pred_acc = self.link_predict_acc(link_pred, labels.int())
+            class_acc = self.link_class_acc(link_class, edge_labels.int())
             
             total_loss += loss
-            total_acc += acc
+            total_pred_acc += pred_acc
+            total_class_acc += class_acc
 
         avg_loss = total_loss / num_windows
-        avg_acc = total_acc / num_windows
+        avg_pred_acc = total_pred_acc / num_windows
+        avg_class_acc = total_class_acc / num_windows
         
         # Logging
         self.log("val_loss", avg_loss, batch_size=batch.num_graphs, on_epoch=True)
-        self.log("val_acc", avg_acc, batch_size=batch.num_graphs, on_epoch=True)
+        self.log("val_pred_acc", avg_pred_acc, batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
+        self.log("val_class_acc", avg_class_acc, batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
 
         return avg_loss
     
@@ -227,14 +287,19 @@ class LitFullModel(L.LightningModule):
         num_windows = batch.num_graphs - (self.rnn_window_size + 1)
         
         if num_windows < 1:
-            print("Validation batch did not have enough")
+            warnings.warn(f"Testing batch ID: {batch_idx} (size {batch.num_graphs}) is not enough \
+                          for a full window of {self.rnn_window_size}")
+            return torch.tensor(0.0, requires_grad=True).to(self.device)
             
         total_loss = torch.tensor(0.0).to(self.device)
-        total_acc = torch.tensor(0.0).to(self.device)
+        total_pred_acc = torch.tensor(0.0).to(self.device)
+        total_class_acc = torch.tensor(0.0).to(self.device)
+        features = [self.gnn(data.x, data.edge_index) for data in batch.to_data_list()]
+        features = torch.stack(features)
             
         for i in range(num_windows):
             to_idx = i + self.rnn_window_size
-            x_graphs = batch.index_select(slice(i, to_idx))
+            x_features = features[i:to_idx]
             y_graph = batch.get_example(to_idx)
 
 
@@ -243,8 +308,9 @@ class LitFullModel(L.LightningModule):
             negative_edges = negative_sampling(
                 edge_index=y_graph.edge_index,
                 num_nodes=y_graph.num_nodes,
-                num_neg_samples=max(positive_edges.size(1), 20)
+                num_neg_samples=max(positive_edges.size(1), self.negative_edge_sampling_min)
             )
+            edge_labels = y_graph.y
 
             edge_pairs = torch.cat([positive_edges, negative_edges], dim=1)
             labels = torch.cat([
@@ -252,20 +318,35 @@ class LitFullModel(L.LightningModule):
                 torch.zeros(negative_edges.size(1))
             ]).to(self.device)
 
-            # Grab scores and calculate metrics
-            scores = self(x_graphs, edge_pairs)
-            loss = F.binary_cross_entropy_with_logits(scores, labels.float())
-            acc = self.binary_acc(scores, labels.int())
+            # Grab scores
+            link_pred, link_class = self(x_features, edge_pairs)
+
+            # Calculate the loss for link prediction
+            pred_loss = F.binary_cross_entropy_with_logits(link_pred, labels.float())
+
+            # Mask the score
+            link_class = link_class[labels.bool()]
+            if positive_edges.any():
+                class_loss = F.cross_entropy(link_class, edge_labels.long())
+            else:
+                class_loss = torch.tensor(0.0, device=self.device)
+
+            loss = pred_loss + self.pred_alpha * class_loss
+            pred_acc = self.link_predict_acc(link_pred, labels.int())
+            class_acc = self.link_class_acc(link_class, edge_labels.int())
             
             total_loss += loss
-            total_acc += acc
+            total_pred_acc += pred_acc
+            total_class_acc += class_acc
 
         avg_loss = total_loss / num_windows
-        avg_acc = total_acc / num_windows
+        avg_pred_acc = total_pred_acc / num_windows
+        avg_class_acc = total_class_acc / num_windows
         
         # Logging
         self.log("test_loss", avg_loss, batch_size=batch.num_graphs, on_epoch=True)
-        self.log("test_acc", avg_acc, batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
+        self.log("test_pred_acc", avg_pred_acc, batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
+        self.log("test_class_acc", avg_class_acc, batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
 
         return avg_loss
 
