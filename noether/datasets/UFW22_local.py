@@ -134,7 +134,7 @@ class UFW22L(L.LightningDataModule):
 
         self.save_hyperparameters()
         self.node_features = 6
-        self.edge_features = 0
+        self.edge_features = 14
         self.num_classes = len(self.tactic_map)
         self.file_stats = {}
         self.file_masks = {}
