@@ -488,7 +488,7 @@ class UFW22L(L.LightningDataModule):
             df = pd.read_pickle(os.path.join(self.data_dir, pkl_file))
             df = self.account_for_duration(df)
             bins = self.generate_bin_ranges(df, range(file_stats["start_ts"], file_stats["end_ts"], self.bin_size))
-            data: BaseData = self.df_to_data(df, bins)
+            data = list(self.df_to_data(df, bins))
             data_transformed: List[BaseData] = list(map(self.transform_data, data))
             for batch_num, batch_i in enumerate(range(0, len(data_transformed), self.batch_size)):
                 batch = SimpleBatch.from_list(data_transformed[batch_i:batch_i+self.batch_size])
