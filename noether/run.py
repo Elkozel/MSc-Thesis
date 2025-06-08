@@ -47,7 +47,9 @@ if __name__ == '__main__':
     # If we train on tensor cores as well
     torch.set_float32_matmul_precision('high')
 
-    early_stop_callback = EarlyStopping(monitor="val_loss", mode="min", verbose=True, check_on_train_epoch_end=False)
-    trainer = L.Trainer(max_epochs = 50, profiler="simple", logger=comet_logger) # type: ignore
+    trainer = L.Trainer(max_epochs = 50, 
+                        profiler="simple", 
+                        logger=comet_logger, 
+                        callbacks=[EarlyStopping(monitor="val_loss", mode="min", check_on_train_epoch_end=False)]) # type: ignore
     trainer.fit(model, datamodule)
     trainer.test(model, datamodule)
