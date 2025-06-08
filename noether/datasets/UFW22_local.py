@@ -359,6 +359,7 @@ class UFW22L(L.LightningDataModule):
                 "proto",
                 "service",
                 "conn_state"
+                # TODO: Add info about the port
                 # TODO: Add history
         ]].astype(float).to_numpy()).to(torch.float32)
         data.y = torch.from_numpy(df["label_tactic"].to_numpy()).to(torch.int64)
