@@ -21,28 +21,31 @@ if __name__ == '__main__':
         workspace="elkozel"
     )
 
-    datasets = {
-        "UFW22": UFW22L
-    }
-    dataset_name = sys.argv[2] if len(sys.argv) > 2 else "UFW22"
     transformations = [
         RemoveDuplicatedEdges(key=["edge_attr", "edge_weight", "time", "y"]),
         RemoveSelfLoops(attr=["edge_attr", "edge_weight", "time", "y"]),
         AddInOutDegree()
     ]
     DATASET_DIR = "/data/datasets/UWF22"
-    datamodule = datasets[dataset_name](DATASET_DIR)
+    datasets = {
+        "UFW22": UFW22L(DATASET_DIR, transforms=transformations)
+    }
+    datamodule = datasets[sys.argv[2]] if len(sys.argv) > 2 else datasets["UFW22"]
 
     models = {
-        "try1": Try1,
-        "try2": Try2,
-    }
-    model_name = sys.argv[1] if len(sys.argv) > 1 else "try2"
-    model = models[model_name](
+        "try1": Try1(
         datamodule.node_features,
         datamodule.node_features * 3,
         out_classes = datamodule.num_classes,
-        dropout_rate = 0.0)
+        dropout_rate = 0.0
+        ),
+        "try2": Try2(
+        datamodule.node_features,
+        out_classes = datamodule.num_classes,
+        pred_alpha = 1.1,
+        ),
+    }
+    model = models[sys.argv[1]] if len(sys.argv) > 1 else models["try2"]
     
     # If we train on tensor cores as well
     torch.set_float32_matmul_precision('high')
