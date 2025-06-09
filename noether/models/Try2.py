@@ -1,5 +1,5 @@
 from ast import List
-from typing import Union
+from typing import Literal, Union
 import torch
 import warnings
 import torchmetrics
@@ -149,8 +149,69 @@ class LitFullModel(L.LightningModule):
         link_class_logits = self.link_classifier(predicted_embeddings[src], predicted_embeddings[dst]) # shape [num_edges]
 
         return link_pred_scores, link_class_logits
+    
+    def run_trough_batch(self, batch: Batch, num_windows: int, step: Literal['train', 'validation', 'test']):
+        total_loss = torch.tensor(0.0).to(self.device)
+        total_pred_acc = torch.tensor(0.0).to(self.device)
+        total_class_acc = torch.tensor(0.0).to(self.device)
+        features = [self.gnn(data.x, data.edge_index, data.edge_attr) for data in batch.to_data_list()]
+        features = torch.stack(features)
+            
+        for i in range(num_windows):
+            to_idx = i + self.rnn_window_size
+            x_features = features[i:to_idx]
+            y_graph = batch.get_example(to_idx)
+            
+            assert y_graph.edge_index is not None
+            assert isinstance(y_graph.y, torch.Tensor)
 
-    def training_step(self, batch: SimpleBatch, batch_idx):
+            # Positive and negative edge sampling
+            positive_edges = y_graph.edge_index
+            negative_edges = negative_sampling(
+                edge_index=y_graph.edge_index,
+                num_nodes=y_graph.num_nodes,
+                num_neg_samples=max(positive_edges.size(1), self.negative_edge_sampling_min)
+            )
+            edge_labels = y_graph.y
+
+            edge_pairs = torch.cat([positive_edges, negative_edges], dim=1)
+            labels = torch.cat([
+                torch.ones(positive_edges.size(1)),
+                torch.zeros(negative_edges.size(1))
+            ]).to(self.device)
+
+            # Grab scores
+            link_pred, link_class = self(x_features, edge_pairs)
+
+            # Calculate the loss for link prediction
+            pred_loss = F.binary_cross_entropy_with_logits(link_pred, labels.float())
+
+            # Mask the score
+            link_class = link_class[labels.bool()]
+            if positive_edges.any():
+                class_loss = F.cross_entropy(link_class, edge_labels.long())
+            else:
+                class_loss = torch.tensor(0.0, device=self.device)
+
+            loss = pred_loss + self.pred_alpha * class_loss
+            pred_acc = self.link_predict_acc(link_pred, labels.int())
+            class_acc = self.link_class_acc(link_class, edge_labels.int())
+            
+            total_loss += loss
+            total_pred_acc += pred_acc
+            total_class_acc += class_acc
+
+        avg_loss = total_loss / num_windows
+        avg_pred_acc = total_pred_acc / num_windows
+        avg_class_acc = total_class_acc / num_windows
+
+        return {
+            "avg_loss": avg_loss,
+            "avg_pred_acc": avg_pred_acc,
+            "avg_class_acc": avg_class_acc
+        }
+
+    def training_step(self, batch: Batch, batch_idx):
         """Trains the model on one batch of temporal graphs."""
         num_windows = batch.num_graphs - (self.rnn_window_size + 1)
         
@@ -159,68 +220,16 @@ class LitFullModel(L.LightningModule):
                           for a full window of {self.rnn_window_size}")
             return torch.tensor(0.0, requires_grad=True).to(self.device)
             
-        total_loss = torch.tensor(0.0).to(self.device)
-        total_pred_acc = torch.tensor(0.0).to(self.device)
-        total_class_acc = torch.tensor(0.0).to(self.device)
-        features = [self.gnn(data.x, data.edge_index, data.edge_attr) for data in batch.to_data_list()]
-        features = torch.stack(features)
-            
-        for i in range(num_windows):
-            to_idx = i + self.rnn_window_size
-            x_features = features[i:to_idx]
-            y_graph = batch.get_example(to_idx)
-            
-            assert y_graph.edge_index is not None
-            assert isinstance(y_graph.y, torch.Tensor)
-
-            # Positive and negative edge sampling
-            positive_edges = y_graph.edge_index
-            negative_edges = negative_sampling(
-                edge_index=y_graph.edge_index,
-                num_nodes=y_graph.num_nodes,
-                num_neg_samples=max(positive_edges.size(1), self.negative_edge_sampling_min)
-            )
-            edge_labels = y_graph.y
-
-            edge_pairs = torch.cat([positive_edges, negative_edges], dim=1)
-            labels = torch.cat([
-                torch.ones(positive_edges.size(1)),
-                torch.zeros(negative_edges.size(1))
-            ]).to(self.device)
-
-            # Grab scores
-            link_pred, link_class = self(x_features, edge_pairs)
-
-            # Calculate the loss for link prediction
-            pred_loss = F.binary_cross_entropy_with_logits(link_pred, labels.float())
-
-            # Mask the score
-            link_class = link_class[labels.bool()]
-            if positive_edges.any():
-                class_loss = F.cross_entropy(link_class, edge_labels.long())
-            else:
-                class_loss = torch.tensor(0.0, device=self.device)
-
-            loss = pred_loss + self.pred_alpha * class_loss
-            pred_acc = self.link_predict_acc(link_pred, labels.int())
-            class_acc = self.link_class_acc(link_class, edge_labels.int())
-            
-            total_loss += loss
-            total_pred_acc += pred_acc
-            total_class_acc += class_acc
-
-        avg_loss = total_loss / num_windows
-        avg_pred_acc = total_pred_acc / num_windows
-        avg_class_acc = total_class_acc / num_windows
+        results = self.run_trough_batch(batch, num_windows, "train")
         
         # Logging
-        self.log("train_loss", avg_loss, batch_size=batch.num_graphs, on_epoch=True)
-        self.log("train_pred_acc", avg_pred_acc, batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
-        self.log("train_class_acc", avg_class_acc, batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
+        self.log("train_loss", results["avg_loss"], batch_size=batch.num_graphs, on_epoch=True)
+        self.log("train_pred_acc", results["avg_pred_acc"], batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
+        self.log("train_class_acc", results["avg_class_acc"], batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
 
-        return avg_loss
+        return results["avg_loss"]
     
-    def validation_step(self, batch: SimpleBatch, batch_idx):
+    def validation_step(self, batch: Batch, batch_idx):
         """Validates the model on one batch of temporal graphs."""
         num_windows = batch.num_graphs - (self.rnn_window_size + 1)
         
@@ -229,68 +238,16 @@ class LitFullModel(L.LightningModule):
                           for a full window of {self.rnn_window_size}")
             return torch.tensor(0.0, requires_grad=True).to(self.device)
             
-        total_loss = torch.tensor(0.0).to(self.device)
-        total_pred_acc = torch.tensor(0.0).to(self.device)
-        total_class_acc = torch.tensor(0.0).to(self.device)
-        features = [self.gnn(data.x, data.edge_index, data.edge_attr) for data in batch.to_data_list()]
-        features = torch.stack(features)
-            
-        for i in range(num_windows):
-            to_idx = i + self.rnn_window_size
-            x_features = features[i:to_idx]
-            y_graph = batch.get_example(to_idx)
-            
-            assert y_graph.edge_index is not None
-            assert isinstance(y_graph.y, torch.Tensor)
-
-            # Positive and negative edge sampling
-            positive_edges = y_graph.edge_index
-            negative_edges = negative_sampling(
-                edge_index=y_graph.edge_index,
-                num_nodes=y_graph.num_nodes,
-                num_neg_samples=max(positive_edges.size(1), self.negative_edge_sampling_min)
-            )
-            edge_labels = y_graph.y
-
-            edge_pairs = torch.cat([positive_edges, negative_edges], dim=1)
-            labels = torch.cat([
-                torch.ones(positive_edges.size(1)),
-                torch.zeros(negative_edges.size(1))
-            ]).to(self.device)
-
-            # Grab scores
-            link_pred, link_class = self(x_features, edge_pairs)
-
-            # Calculate the loss for link prediction
-            pred_loss = F.binary_cross_entropy_with_logits(link_pred, labels.float())
-
-            # Mask the score
-            link_class = link_class[labels.bool()]
-            if positive_edges.any():
-                class_loss = F.cross_entropy(link_class, edge_labels.long())
-            else:
-                class_loss = torch.tensor(0.0, device=self.device)
-
-            loss = pred_loss + self.pred_alpha * class_loss
-            pred_acc = self.link_predict_acc(link_pred, labels.int())
-            class_acc = self.link_class_acc(link_class, edge_labels.int())
-            
-            total_loss += loss
-            total_pred_acc += pred_acc
-            total_class_acc += class_acc
-
-        avg_loss = total_loss / num_windows
-        avg_pred_acc = total_pred_acc / num_windows
-        avg_class_acc = total_class_acc / num_windows
+        results = self.run_trough_batch(batch, num_windows, "validation")
         
         # Logging
-        self.log("val_loss", avg_loss, batch_size=batch.num_graphs, on_epoch=True)
-        self.log("val_pred_acc", avg_pred_acc, batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
-        self.log("val_class_acc", avg_class_acc, batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
+        self.log("val_loss", results["avg_loss"], batch_size=batch.num_graphs, on_epoch=True)
+        self.log("val_pred_acc", results["avg_pred_acc"], batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
+        self.log("val_class_acc", results["avg_class_acc"], batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
 
-        return avg_loss
+        return results["avg_loss"]
     
-    def test_step(self, batch: SimpleBatch, batch_idx):
+    def test_step(self, batch: Batch, batch_idx):
         """Validates the model on one batch of temporal graphs."""
         num_windows = batch.num_graphs - (self.rnn_window_size + 1)
         
@@ -299,66 +256,14 @@ class LitFullModel(L.LightningModule):
                           for a full window of {self.rnn_window_size}")
             return torch.tensor(0.0, requires_grad=True).to(self.device)
             
-        total_loss = torch.tensor(0.0).to(self.device)
-        total_pred_acc = torch.tensor(0.0).to(self.device)
-        total_class_acc = torch.tensor(0.0).to(self.device)
-        features = [self.gnn(data.x, data.edge_index, data.edge_attr) for data in batch.to_data_list()]
-        features = torch.stack(features)
-            
-        for i in range(num_windows):
-            to_idx = i + self.rnn_window_size
-            x_features = features[i:to_idx]
-            y_graph = batch.get_example(to_idx)
-
-            assert y_graph.edge_index is not None
-            assert isinstance(y_graph.y, torch.Tensor)
-
-            # Positive and negative edge sampling
-            positive_edges = y_graph.edge_index
-            negative_edges = negative_sampling(
-                edge_index=y_graph.edge_index,
-                num_nodes=y_graph.num_nodes,
-                num_neg_samples=max(positive_edges.size(1), self.negative_edge_sampling_min)
-            )
-            edge_labels = y_graph.y
-
-            edge_pairs = torch.cat([positive_edges, negative_edges], dim=1)
-            labels = torch.cat([
-                torch.ones(positive_edges.size(1)),
-                torch.zeros(negative_edges.size(1))
-            ]).to(self.device)
-
-            # Grab scores
-            link_pred, link_class = self(x_features, edge_pairs)
-
-            # Calculate the loss for link prediction
-            pred_loss = F.binary_cross_entropy_with_logits(link_pred, labels.float())
-
-            # Mask the score
-            link_class = link_class[labels.bool()]
-            if positive_edges.any():
-                class_loss = F.cross_entropy(link_class, edge_labels.long())
-            else:
-                class_loss = torch.tensor(0.0, device=self.device)
-
-            loss = pred_loss + self.pred_alpha * class_loss
-            pred_acc = self.link_predict_acc(link_pred, labels.int())
-            class_acc = self.link_class_acc(link_class, edge_labels.int())
-            
-            total_loss += loss
-            total_pred_acc += pred_acc
-            total_class_acc += class_acc
-
-        avg_loss = total_loss / num_windows
-        avg_pred_acc = total_pred_acc / num_windows
-        avg_class_acc = total_class_acc / num_windows
+        results = self.run_trough_batch(batch, num_windows, "test")
         
         # Logging
-        self.log("test_loss", avg_loss, batch_size=batch.num_graphs, on_epoch=True)
-        self.log("test_pred_acc", avg_pred_acc, batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
-        self.log("test_class_acc", avg_class_acc, batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
+        self.log("test_loss", results["avg_loss"], batch_size=batch.num_graphs, on_epoch=True)
+        self.log("test_pred_acc", results["avg_pred_acc"], batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
+        self.log("test_class_acc", results["avg_class_acc"], batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
 
-        return avg_loss
+        return results["avg_loss"]
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=1e-3)
