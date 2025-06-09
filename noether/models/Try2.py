@@ -91,8 +91,8 @@ class LitFullModel(L.LightningModule):
     def __init__(
         self,
         in_channels,
-        hidden_channels,
-        dropout_rate,
+        hidden_channels = None,
+        dropout_rate = 0.0,
         out_classes = 1,
         rnn_window_size = 30,
         rnn_num_layers = 1,
@@ -102,6 +102,9 @@ class LitFullModel(L.LightningModule):
         model_name="Try2"
     ):
         super().__init__()
+
+        if hidden_channels is None:
+            hidden_channels = in_channels * 3
 
         self.gnn = GNNEncoder(in_channels, hidden_channels, dropout_rate)
         self.rnn = RNNEncoder(hidden_channels, rnn_num_layers)
