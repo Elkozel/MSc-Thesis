@@ -51,8 +51,7 @@ if __name__ == '__main__':
     # If we train on tensor cores as well
     torch.set_float32_matmul_precision('high')
 
-    trainer = L.Trainer(max_epochs = 50, 
-                        profiler="simple", 
+    trainer = L.Trainer(max_epochs = 50,
                         logger=comet_logger,  # type: ignore
                         callbacks=[EarlyStopping(monitor="val_loss", mode="min", check_on_train_epoch_end=False)]) # type: ignore
     trainer.fit(model, dataset)
