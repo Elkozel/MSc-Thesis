@@ -10,7 +10,7 @@ from torch_geometric.utils import negative_sampling
 from torch_geometric.data import Data
 import torchmetrics.classification
 
-from noether.utils import SimpleBatch
+from utils.SimpleBatch import SimpleBatch
 
 
 class GNNEncoder(nn.Module):
