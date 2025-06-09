@@ -30,19 +30,20 @@ if __name__ == '__main__':
     datasets = {
         "UFW22": UFW22L(DATASET_DIR, transforms=transformations)
     }
-    datamodule = datasets[sys.argv[2]] if len(sys.argv) > 2 else datasets["UFW22"]
+    dataset = datasets[sys.argv[2]] if len(sys.argv) > 2 else datasets["UFW22"]
 
     models = {
         "try1": Try1(
-        datamodule.node_features,
-        datamodule.node_features * 3,
-        out_classes = datamodule.num_classes,
+        dataset.node_features,
+        dataset.node_features * 3,
+        out_classes = dataset.num_classes,
         dropout_rate = 0.0
         ),
         "try2": Try2(
-        datamodule.node_features,
-        out_classes = datamodule.num_classes,
+        dataset.node_features,
+        out_classes = dataset.num_classes,
         pred_alpha = 1.1,
+        edge_dim = dataset.edge_features
         ),
     }
     model = models[sys.argv[1]] if len(sys.argv) > 1 else models["try2"]
@@ -52,7 +53,7 @@ if __name__ == '__main__':
 
     trainer = L.Trainer(max_epochs = 50, 
                         profiler="simple", 
-                        logger=comet_logger, 
+                        logger=comet_logger,  # type: ignore
                         callbacks=[EarlyStopping(monitor="val_loss", mode="min", check_on_train_epoch_end=False)]) # type: ignore
-    trainer.fit(model, datamodule)
-    trainer.test(model, datamodule)
+    trainer.fit(model, dataset)
+    trainer.test(model, dataset)

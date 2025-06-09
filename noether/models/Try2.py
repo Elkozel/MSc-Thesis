@@ -14,13 +14,13 @@ from utils.SimpleBatch import SimpleBatch
 
 
 class GNNEncoder(nn.Module):
-    def __init__(self, in_channels, hidden_channels, dropout_rate):
+    def __init__(self, in_channels, hidden_channels, dropout_rate, edge_dim):
         super().__init__()
-        self.conv1 = GATv2Conv(in_channels, hidden_channels*3)
+        self.conv1 = GATv2Conv(in_channels, hidden_channels*3, edge_dim=edge_dim)
         self.norm1 = nn.LayerNorm(hidden_channels*3)
-        self.conv2 = GATv2Conv(hidden_channels*3, hidden_channels*2)
+        self.conv2 = GATv2Conv(hidden_channels*3, hidden_channels*2, edge_dim=edge_dim)
         self.norm2 = nn.LayerNorm(hidden_channels*2)
-        self.conv3 = GATv2Conv(hidden_channels*2, hidden_channels)
+        self.conv3 = GATv2Conv(hidden_channels*2, hidden_channels, edge_dim=edge_dim)
         self.norm3 = nn.LayerNorm(hidden_channels)
         
         self.dropout = dropout_rate
@@ -93,6 +93,7 @@ class LitFullModel(L.LightningModule):
         in_channels,
         hidden_channels = None,
         dropout_rate = 0.0,
+        edge_dim = None,
         out_classes = 1,
         rnn_window_size = 30,
         rnn_num_layers = 1,
@@ -106,7 +107,7 @@ class LitFullModel(L.LightningModule):
         if hidden_channels is None:
             hidden_channels = in_channels * 3
 
-        self.gnn = GNNEncoder(in_channels, hidden_channels, dropout_rate)
+        self.gnn = GNNEncoder(in_channels, hidden_channels, dropout_rate, edge_dim)
         self.rnn = RNNEncoder(hidden_channels, rnn_num_layers)
         self.link_pred = LinkPredictor(hidden_channels, 1)
         self.link_classifier = LinkTypeClassifier(hidden_channels, out_classes)

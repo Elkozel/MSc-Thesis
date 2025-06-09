@@ -3,7 +3,7 @@ import os
 import math
 import numpy as np
 import logging
-from typing import List, Literal, Union
+from typing import Any, Hashable, List, Literal, Union
 import requests
 import torch
 from tqdm import tqdm
@@ -220,6 +220,8 @@ class UFW22L(L.LightningDataModule):
         return hostmap_df, min_time
     
     def generate_servicemap(self):
+        assert self.hostmap is not None
+        
         if os.path.exists(self.servicemap_file):
             return pd.read_pickle(self.servicemap_file)
 
@@ -242,6 +244,7 @@ class UFW22L(L.LightningDataModule):
         servicemap_df = servicemap_df.drop_duplicates()
         servicemap_df = servicemap_df.reset_index()
         servicemap_df["service_id"] = servicemap_df.index
+        servicemap_df['host_id'] = servicemap_df['ip'].map(self.hostmap["host_id"])
 
         servicemap_df.to_pickle(self.servicemap_file)
 
@@ -433,7 +436,9 @@ class UFW22L(L.LightningDataModule):
 
         return bin_ranges
 
-    def df_to_data(self, df: pd.DataFrame, bin_ranges: dict[str, int]):
+    def df_to_data(self, df: pd.DataFrame, bin_ranges: dict[Hashable, Any]):
+        assert self.hostmap is not None
+        
         data = Data()
         data.time = torch.from_numpy(df["ts"].to_numpy()).to(dtype=torch.int64)
         data.x = torch.from_numpy(self.hostmap[[
@@ -472,7 +477,7 @@ class UFW22L(L.LightningDataModule):
             yield Data(
                 time=data.time[start_idx:end_idx],
                 edge_index=data.edge_index[:, start_idx:end_idx],
-                y=data.y[start_idx:end_idx],
+                y=data.y[start_idx:end_idx], # type: ignore
                 x=data.x
             )
 
@@ -524,8 +529,8 @@ class CustomBatchDataset(torch.utils.data.IterableDataset):
 
     def calulate_length(self):
         all_masks = list(self.data_module.file_masks.values())
-        total_length = torch.cat(all_masks)
-        return int(torch.sum(total_length == self.stage))
+        one_huge_mask = torch.cat(all_masks)
+        return int(torch.sum(one_huge_mask == self.stage))
     
     def __iter__(self):
         return self.data_module.batch_generator(self.stage)
