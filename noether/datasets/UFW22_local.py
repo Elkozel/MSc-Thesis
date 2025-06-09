@@ -3,7 +3,7 @@ import os
 import math
 import numpy as np
 import logging
-from typing import List, Literal
+from typing import Any, Hashable, List, Literal, Union
 import requests
 import torch
 from tqdm import tqdm
@@ -11,7 +11,7 @@ import pandas as pd
 from utils.SimpleBatch import SimpleBatch
 from transforms.EnrichHost import EnrichHost
 from torch.utils.data import random_split, TensorDataset
-from torch_geometric.data import Data
+from torch_geometric.data import Data, HeteroData
 from torch_geometric.loader import DataLoader
 from torch_geometric.data.data import BaseData
 from torch_geometric.data.batch import Batch
@@ -126,6 +126,7 @@ class UFW22L(L.LightningDataModule):
         self.data_dir = data_dir
         self.data_file = os.path.join(data_dir, "data.pkl")
         self.hostmap_file = os.path.join(data_dir, "hostmap.pkl")
+        self.servicemap_file = os.path.join(data_dir, "servicemap.pkl")
         self.bin_size = bin_size
         self.batch_size = batch_size
         self.dataset_name = dataset_name
@@ -141,7 +142,8 @@ class UFW22L(L.LightningDataModule):
         self.hostmap = None
     
     def check_files(self):
-        return os.path.exists(os.path.join(self.data_dir, self.hostmap_file)) and \
+        return os.path.exists(self.hostmap_file) and \
+               os.path.exists(self.servicemap_file) and \
                all([os.path.exists(os.path.join(self.data_dir, link["pkl_file"])) for link in self.download_data])
     
     def download_file(self, url, filepath, tqdm_pos=0):
@@ -190,7 +192,7 @@ class UFW22L(L.LightningDataModule):
             
     def generate_hostmap(self):
         if os.path.exists(os.path.join(self.data_dir, self.hostmap_file)):
-            return pd.read_pickle(os.path.join(self.data_dir, self.hostmap_file))
+            return pd.read_pickle(self.hostmap_file)
 
         # Build a list of full file paths for all raw data files
         all_files = [os.path.join(self.data_dir, file["raw_file"]) for file in self.download_data]
@@ -209,15 +211,47 @@ class UFW22L(L.LightningDataModule):
 
         # Save the resulting hostmap DataFrame as a pickle file for later use
         hostmap_df = hostmap_df.set_index("ip")
-        hostmap_df.to_pickle(os.path.join(self.data_dir, self.hostmap_file))
+        hostmap_df.to_pickle(self.hostmap_file)
 
         # compute minimal time ()
         min_time = float(all_dfs['ts'].min())
 
         # Return the hostmap DataFrame
         return hostmap_df, min_time
+    
+    def generate_servicemap(self):
+        assert self.hostmap is not None
+        
+        if os.path.exists(self.servicemap_file):
+            return pd.read_pickle(self.servicemap_file)
 
-    def parquet_to_pickle(self, parquet_file, pickle_file, hostmap, min_time, tqdm_pos=0):
+        # Build a list of full file paths for all raw data files
+        all_files = [os.path.join(self.data_dir, file["raw_file"]) for file in self.download_data]
+        
+        # Read all Parquet files and concatenate them into a single DataFrame
+        all_dfs = pd.concat([pd.read_parquet(file) for file in all_files], copy=False)
+        src = all_dfs[["src_ip_zeek", "src_port_zeek"]].rename(columns={
+            "src_ip_zeek": "ip",
+            "src_port_zeek": "port"
+        })
+
+        dest = all_dfs[["dest_ip_zeek", "dest_port_zeek"]].rename(columns={
+            "dest_ip_zeek": "ip",
+            "dest_port_zeek": "port"
+        })
+
+        servicemap_df = pd.concat([src, dest], ignore_index=True)
+        servicemap_df = servicemap_df.drop_duplicates()
+        servicemap_df = servicemap_df.reset_index()
+        servicemap_df["service_id"] = servicemap_df.index
+        servicemap_df['host_id'] = servicemap_df['ip'].map(self.hostmap["host_id"])
+
+        servicemap_df.to_pickle(self.servicemap_file)
+
+        return servicemap_df
+
+
+    def parquet_to_pickle(self, parquet_file, pickle_file, hostmap, servicemap, min_time, tqdm_pos=0):
         # Initialize a progress bar with a total of 5 steps
         with tqdm(position=tqdm_pos, total=5, desc=f"Generating {os.path.basename(pickle_file)}") as pbar:
             
@@ -234,10 +268,26 @@ class UFW22L(L.LightningDataModule):
             df["service"] = df["service"].map(self.service_map).fillna(0)
             pbar.update(1)
             
-            # Step 3: Map IP addresses to unique host IDs using the provided hostmap
+            # Step 3a: Map IP addresses to unique host IDs using the hostmap
             pbar.set_description(f"Applying hostmap")
             df['src_ip_id'] = df['src_ip_zeek'].map(hostmap["host_id"])
             df['dest_ip_id'] = df['dest_ip_zeek'].map(hostmap["host_id"])
+            pbar.update(1)
+
+            # Step 3b: Map IP-port pairs to unique service IDs using the servicemap
+            pbar.set_description(f"Applying hostmap")
+            df = df.merge(
+                servicemap,
+                how='left',
+                left_on=['src_ip_zeek', 'src_port_zeek'],
+                right_on=['ip', 'port']
+            ).rename(columns={'service_id': 'src_service_id'}).drop(columns=['ip', 'port'])
+            df = df.merge(
+                servicemap,
+                how='left',
+                left_on=['dest_ip_zeek', 'dest_port_zeek'],
+                right_on=['ip', 'port']
+            ).rename(columns={'service_id': 'dest_service_id'}).drop(columns=['ip', 'port'])
             pbar.update(1)
 
             # Step 4: Adjust and normalize time data
@@ -267,12 +317,16 @@ class UFW22L(L.LightningDataModule):
         # Hostmap
         hostmap_df, min_time = self.generate_hostmap()
 
+        # Servicemap
+        servicemap_df = self.generate_servicemap()
+
         # Generate pickle files
         with ThreadPool(8) as pool:
             args = [(
                 os.path.join(self.data_dir, file["raw_file"]), 
                 os.path.join(self.data_dir, file["pkl_file"]), 
-                hostmap_df, 
+                hostmap_df,
+                servicemap_df,
                 min_time, 
                 pos
                 ) for pos, file in enumerate(self.download_data, 1)]
@@ -327,45 +381,12 @@ class UFW22L(L.LightningDataModule):
         return self.file_masks[pickle_file]
         
     def setup(self, stage: str):
-        self.hostmap = pd.read_pickle(os.path.join(self.data_dir, self.hostmap_file))
+        self.hostmap = pd.read_pickle(self.hostmap_file)
+        self.servicemap = pd.read_pickle(self.servicemap_file)
 
         for file in self.download_data:
             self.pickle_statistics(file["pkl_file"])
             self.generate_split(file["pkl_file"])
-
-    def df_to_data(self, df: pd.DataFrame, hostmap: pd.DataFrame):
-        data = Data()
-        data.time = torch.from_numpy(df["ts"].to_numpy()).to(dtype=torch.int64)
-        data.x = torch.from_numpy(hostmap[[
-                "internal",
-                "broadcast",
-                "multicast",
-                "ipv4",
-                "ipv6",
-                "valid",
-        ]].to_numpy()).to(torch.float32)
-        data.edge_index = torch.from_numpy(df[["src_ip_id", "dest_ip_id"]].to_numpy().T).to(torch.int64)
-        data.edge_attr = torch.from_numpy(df[[
-                "conn_status",
-                "src_port_zeek",
-                "dest_port_zeek",
-                "orig_bytes",
-                "orig_pkts",
-                "resp_bytes",
-                "resp_pkts",
-                "missed_bytes",
-                "local_orig",
-                "local_resp",
-                "duration",
-                "proto",
-                "service",
-                "conn_state"
-                # TODO: Add info about the port
-                # TODO: Add history
-        ]].astype(float).to_numpy()).to(torch.float32)
-        data.y = torch.from_numpy(df["label_tactic"].to_numpy()).to(torch.int64)
-
-        return data
     
     def account_for_duration(self, df: pd.DataFrame):
         def expand(x):
@@ -396,18 +417,12 @@ class UFW22L(L.LightningDataModule):
         df = df.reset_index(drop=True)  # Reset index after sorting
         return df
 
-    def transform_data(self, data: Data) -> Data:
+    def transform_data(self, data: Union[Data, HeteroData]) -> BaseData:
         for transform in self.transforms:
             data = transform(data)
         return data
 
-    def bin_data(self, df_data: pd.DataFrame, bins, data: Data):
-        # A couple of assertions
-        assert data.time is not None
-        assert data.edge_index is not None
-        assert data.y is not None
-        assert isinstance(data.y, torch.Tensor)
-
+    def generate_bin_ranges(self, df_data: pd.DataFrame, bins):
         # Cut the data into bins
         df_data["bin"] = pd.cut(df_data["ts"], bins, ordered=True, labels=False, right=False)
         bin_ranges = df_data.groupby("bin").apply(
@@ -418,7 +433,43 @@ class UFW22L(L.LightningDataModule):
             }),
             include_groups=False  
         ).to_dict(orient="index")
+
+        return bin_ranges
+
+    def df_to_data(self, df: pd.DataFrame, bin_ranges: dict[Hashable, Any]):
+        assert self.hostmap is not None
         
+        data = Data()
+        data.time = torch.from_numpy(df["ts"].to_numpy()).to(dtype=torch.int64)
+        data.x = torch.from_numpy(self.hostmap[[
+                "internal",
+                "broadcast",
+                "multicast",
+                "ipv4",
+                "ipv6",
+                "valid",
+        ]].to_numpy()).to(torch.float32)
+        data.edge_index = torch.from_numpy(df[["src_ip_id", "dest_ip_id"]].to_numpy().T).to(torch.int64)
+        data.edge_attr = torch.from_numpy(df[[
+                "conn_status",
+                "src_port_zeek",
+                "dest_port_zeek",
+                "orig_bytes",
+                "orig_pkts",
+                "resp_bytes",
+                "resp_pkts",
+                "missed_bytes",
+                "local_orig",
+                "local_resp",
+                "duration",
+                "proto",
+                "service",
+                "conn_state"
+                # TODO: Add info about the port
+                # TODO: Add history
+        ]].astype(float).to_numpy()).to(torch.float32)
+        data.y = torch.from_numpy(df["label_tactic"].to_numpy()).to(torch.int64)
+
         # Generate bins
         for bin_id, range in bin_ranges.items():
             start_idx = int(range["start"])
@@ -426,12 +477,13 @@ class UFW22L(L.LightningDataModule):
             yield Data(
                 time=data.time[start_idx:end_idx],
                 edge_index=data.edge_index[:, start_idx:end_idx],
-                y=data.y[start_idx:end_idx],
+                y=data.y[start_idx:end_idx], # type: ignore
                 x=data.x
             )
 
     def batch_generator(self, stage: Literal['train', 'val', 'test']):
         assert self.hostmap is not None
+        assert self.servicemap is not None
 
         for file in self.download_data:
             pkl_file = file["pkl_file"]
@@ -440,9 +492,9 @@ class UFW22L(L.LightningDataModule):
 
             df = pd.read_pickle(os.path.join(self.data_dir, pkl_file))
             df = self.account_for_duration(df)
-            data = self.df_to_data(df, self.hostmap)
-            data_binned = list(self.bin_data(df, range(file_stats["start_ts"], file_stats["end_ts"], self.bin_size), data))
-            data_transformed: List[BaseData] = list(map(self.transform_data, data_binned))
+            bins = self.generate_bin_ranges(df, range(file_stats["start_ts"], file_stats["end_ts"], self.bin_size))
+            data = list(self.df_to_data(df, bins))
+            data_transformed: List[BaseData] = list(map(self.transform_data, data))
             for batch_num, batch_i in enumerate(range(0, len(data_transformed), self.batch_size)):
                 batch = SimpleBatch.from_list(data_transformed[batch_i:batch_i+self.batch_size])
                 stage_num = 0
@@ -477,8 +529,8 @@ class CustomBatchDataset(torch.utils.data.IterableDataset):
 
     def calulate_length(self):
         all_masks = list(self.data_module.file_masks.values())
-        total_length = torch.cat(all_masks)
-        return int(torch.sum(total_length == self.stage))
+        one_huge_mask = torch.cat(all_masks)
+        return int(torch.sum(one_huge_mask == self.stage))
     
     def __iter__(self):
         return self.data_module.batch_generator(self.stage)
