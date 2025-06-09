@@ -25,8 +25,8 @@ class GNNEncoder(nn.Module):
         
         self.dropout = dropout_rate
 
-    def forward(self, x, edge_index):
-        out = self.conv1(x, edge_index)
+    def forward(self, x, edge_index, edge_features):
+        out = self.conv1(x, edge_index, edge_features)
         out = self.norm1(out)
         out = F.relu(out)
         out = F.dropout(out, p=self.dropout, training=self.training)
@@ -130,7 +130,7 @@ class LitFullModel(L.LightningModule):
         if isinstance(graph_sequence, torch.Tensor):
             graph_features = graph_sequence
         else:
-            graph_features = [self.gnn(data.x, data.edge_index) for data in graph_sequence]
+            graph_features = [self.gnn(data.x, data.edge_index, data.edge_attr) for data in graph_sequence]
             graph_features = torch.stack(graph_features)
 
         # Switch the order, so that each node is treated as a batch
@@ -162,14 +162,16 @@ class LitFullModel(L.LightningModule):
         total_loss = torch.tensor(0.0).to(self.device)
         total_pred_acc = torch.tensor(0.0).to(self.device)
         total_class_acc = torch.tensor(0.0).to(self.device)
-        features = [self.gnn(data.x, data.edge_index) for data in batch.to_data_list()]
+        features = [self.gnn(data.x, data.edge_index, data.edge_attr) for data in batch.to_data_list()]
         features = torch.stack(features)
             
         for i in range(num_windows):
             to_idx = i + self.rnn_window_size
             x_features = features[i:to_idx]
             y_graph = batch.get_example(to_idx)
-
+            
+            assert y_graph.edge_index is not None
+            assert isinstance(y_graph.y, torch.Tensor)
 
             # Positive and negative edge sampling
             positive_edges = y_graph.edge_index
@@ -230,14 +232,16 @@ class LitFullModel(L.LightningModule):
         total_loss = torch.tensor(0.0).to(self.device)
         total_pred_acc = torch.tensor(0.0).to(self.device)
         total_class_acc = torch.tensor(0.0).to(self.device)
-        features = [self.gnn(data.x, data.edge_index) for data in batch.to_data_list()]
+        features = [self.gnn(data.x, data.edge_index, data.edge_attr) for data in batch.to_data_list()]
         features = torch.stack(features)
             
         for i in range(num_windows):
             to_idx = i + self.rnn_window_size
             x_features = features[i:to_idx]
             y_graph = batch.get_example(to_idx)
-
+            
+            assert y_graph.edge_index is not None
+            assert isinstance(y_graph.y, torch.Tensor)
 
             # Positive and negative edge sampling
             positive_edges = y_graph.edge_index
@@ -298,7 +302,7 @@ class LitFullModel(L.LightningModule):
         total_loss = torch.tensor(0.0).to(self.device)
         total_pred_acc = torch.tensor(0.0).to(self.device)
         total_class_acc = torch.tensor(0.0).to(self.device)
-        features = [self.gnn(data.x, data.edge_index) for data in batch.to_data_list()]
+        features = [self.gnn(data.x, data.edge_index, data.edge_attr) for data in batch.to_data_list()]
         features = torch.stack(features)
             
         for i in range(num_windows):
@@ -306,6 +310,8 @@ class LitFullModel(L.LightningModule):
             x_features = features[i:to_idx]
             y_graph = batch.get_example(to_idx)
 
+            assert y_graph.edge_index is not None
+            assert isinstance(y_graph.y, torch.Tensor)
 
             # Positive and negative edge sampling
             positive_edges = y_graph.edge_index
