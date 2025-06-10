@@ -1,16 +1,14 @@
-from ast import List
-from typing import Literal, Union
 import torch
 import warnings
 import torchmetrics
 import torch.nn as nn
 import lightning as L
 import torch.nn.functional as F
+from typing import Literal, Union
 from torch_geometric.nn import GATv2Conv
 from torch_geometric.utils import negative_sampling
 from torch_geometric.data import Data, Batch
 import torchmetrics.classification
-from utils.SimpleBatch import SimpleBatch
 
 
 class GNNEncoder(nn.Module):
