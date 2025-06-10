@@ -124,7 +124,7 @@ class UFW22L(L.LightningDataModule):
     def __init__(self, data_dir, bin_size = 20, batch_size = 350, dataset_name = "UFW22", transforms = [], rnn_window = 30):
         super().__init__()
         self.data_dir = data_dir
-        self.data_file = os.path.join(data_dir, "data.pkl")
+        self.stats_file = os.path.join(data_dir, "stats.json")
         self.hostmap_file = os.path.join(data_dir, "hostmap.pkl")
         self.servicemap_file = os.path.join(data_dir, "servicemap.pkl")
         self.bin_size = bin_size
@@ -191,8 +191,9 @@ class UFW22L(L.LightningDataModule):
             pool.map(lambda x: self.download_file(*x), args)
             
     def generate_hostmap(self):
-        if os.path.exists(os.path.join(self.data_dir, self.hostmap_file)):
-            return pd.read_pickle(self.hostmap_file)
+        # TODO: Fix the code below
+        # if os.path.exists(self.hostmap_file):
+        #     return pd.read_pickle(self.hostmap_file)
 
         # Build a list of full file paths for all raw data files
         all_files = [os.path.join(self.data_dir, file["raw_file"]) for file in self.download_data]
@@ -219,9 +220,8 @@ class UFW22L(L.LightningDataModule):
         # Return the hostmap DataFrame
         return hostmap_df, min_time
     
-    def generate_servicemap(self):
-        assert self.hostmap is not None
-        
+    def generate_servicemap(self, hostmap_df: pd.DataFrame):
+
         if os.path.exists(self.servicemap_file):
             return pd.read_pickle(self.servicemap_file)
 
@@ -244,7 +244,7 @@ class UFW22L(L.LightningDataModule):
         servicemap_df = servicemap_df.drop_duplicates()
         servicemap_df = servicemap_df.reset_index()
         servicemap_df["service_id"] = servicemap_df.index
-        servicemap_df['host_id'] = servicemap_df['ip'].map(self.hostmap["host_id"])
+        servicemap_df['host_id'] = servicemap_df['ip'].map(hostmap_df["host_id"])
 
         servicemap_df.to_pickle(self.servicemap_file)
 
@@ -318,7 +318,7 @@ class UFW22L(L.LightningDataModule):
         hostmap_df, min_time = self.generate_hostmap()
 
         # Servicemap
-        servicemap_df = self.generate_servicemap()
+        servicemap_df = self.generate_servicemap(hostmap_df)
 
         # Generate pickle files
         with ThreadPool(8) as pool:
@@ -425,18 +425,19 @@ class UFW22L(L.LightningDataModule):
     def generate_bin_ranges(self, df_data: pd.DataFrame, bins):
         # Cut the data into bins
         df_data["bin"] = pd.cut(df_data["ts"], bins, ordered=True, labels=False, right=False)
-        bin_ranges = df_data.groupby("bin").apply(
-            lambda g: pd.Series({
-                "bin": g.name,
-                "start": g.index[0],
-                "end": g.index[-1] + 1
-            }),
-            include_groups=False  
-        ).to_dict(orient="index")
+        bin_ranges = []
+        for bin in bins:
+            df_bin = df_data[df_data["bin"] == bin]
+            bin_ranges.append({
+                "bin": bin,
+                "empty": df_bin.empty,
+                "start": df_bin.index.min(),
+                "end": df_bin.index.max(),
+            })
 
         return bin_ranges
 
-    def df_to_data(self, df: pd.DataFrame, bin_ranges: dict[Hashable, Any]):
+    def df_to_data(self, df: pd.DataFrame, bin_ranges: List[Any]):
         assert self.hostmap is not None
         
         data = Data()
@@ -471,15 +472,25 @@ class UFW22L(L.LightningDataModule):
         data.y = torch.from_numpy(df["label_tactic"].to_numpy()).to(torch.int64)
 
         # Generate bins
-        for bin_id, range in bin_ranges.items():
-            start_idx = int(range["start"])
-            end_idx = int(range["end"])
-            yield Data(
-                time=data.time[start_idx:end_idx],
-                edge_index=data.edge_index[:, start_idx:end_idx],
-                y=data.y[start_idx:end_idx], # type: ignore
-                x=data.x
-            )
+        for range in bin_ranges:
+            if range["empty"]:
+                yield Data(
+                    time=torch.Tensor([]).to(torch.int64),
+                    edge_index=torch.Tensor([[], []]).to(torch.int64),
+                    edge_attr=torch.Tensor([]).to(torch.float32),
+                    y=torch.Tensor([]).to(torch.int64), # type: ignore
+                    x=data.x
+                )
+            else:
+                start_idx = int(range["start"])
+                end_idx = int(range["end"])
+                yield Data(
+                    time=data.time[start_idx:end_idx],
+                    edge_index=data.edge_index[:, start_idx:end_idx],
+                    edge_attr=data.edge_attr[start_idx:end_idx],
+                    y=data.y[start_idx:end_idx], # type: ignore
+                    x=data.x
+                )
 
     def batch_generator(self, stage: Literal['train', 'val', 'test']):
         assert self.hostmap is not None
@@ -505,8 +516,8 @@ class UFW22L(L.LightningDataModule):
                 if batch_mask[batch_num] != stage_num:
                     continue
 
-                if batch.num_graphs <= self.rnn_window:
-                    continue
+                # if batch.num_graphs <= self.rnn_window:
+                #     continue
                 yield batch
 
     def train_dataloader(self):
@@ -529,8 +540,8 @@ class CustomBatchDataset(torch.utils.data.IterableDataset):
 
     def calulate_length(self):
         all_masks = list(self.data_module.file_masks.values())
-        one_huge_mask = torch.cat(all_masks)
-        return int(torch.sum(one_huge_mask == self.stage))
+        lengts = [torch.sum(mask == self.stage) for mask in all_masks]
+        return sum(lengts)
     
     def __iter__(self):
         return self.data_module.batch_generator(self.stage)
