@@ -28,11 +28,11 @@ class GNNEncoder(nn.Module):
         out = self.norm1(out)
         out = F.relu(out)
         out = F.dropout(out, p=self.dropout, training=self.training)
-        out = self.conv2(out, edge_index)
+        out = self.conv2(out, edge_index, edge_features)
         out = self.norm2(out)
         out = F.relu(out)
         out = F.dropout(out, p=self.dropout, training=self.training)
-        out = self.conv3(out, edge_index)
+        out = self.conv3(out, edge_index, edge_features)
         out = self.norm3(out)
         return out  # node embeddings
     
