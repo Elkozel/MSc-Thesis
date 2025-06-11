@@ -1,4 +1,5 @@
 import comet_ml
+from comet_ml.integration.pytorch import log_model
 import torch
 from pytorch_lightning.loggers import CometLogger
 from transforms.AddInOutDegree import AddInOutDegree
@@ -48,7 +49,12 @@ if __name__ == '__main__':
         edge_dim = dataset.edge_features
         ),
     }
-    model = models[sys.argv[1]] if len(sys.argv) > 1 else models["try1"]
+    model = models[sys.argv[1]] if len(sys.argv) > 1 else models["try2"]
+    log_model(
+        experiment=comet_logger.experiment,
+        model=model,
+        model_name=model.model_name,
+    )
     
     # If we train on tensor cores as well
     torch.set_float32_matmul_precision('high')

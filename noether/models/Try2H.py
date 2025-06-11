@@ -114,7 +114,7 @@ class LitFullModel(L.LightningModule):
         binary_threshold = 0.5,
         negative_edge_sampling_min = 20,
         pred_alpha = 0.8,
-        model_name="Try2"
+        model_name="Try2H"
     ):
         super().__init__()
 
