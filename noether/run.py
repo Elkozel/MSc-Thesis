@@ -12,6 +12,7 @@ import lightning as L
 from models.Try1 import LitFullModel as Try1
 from models.Try2 import LitFullModel as Try2
 from datasets.UFW22_local import UFW22L
+from datasets.UFW22H_local import UFW22HL
 
 if __name__ == '__main__':
     # Initialize a Comet experiment for logging metrics
@@ -28,7 +29,8 @@ if __name__ == '__main__':
     ]
     DATASET_DIR = "/data/datasets/UWF22"
     datasets = {
-        "UFW22": UFW22L(DATASET_DIR, transforms=transformations)
+        "UFW22": UFW22L(DATASET_DIR, transforms=transformations),
+        "UFW22H": UFW22HL(DATASET_DIR, transforms=transformations)
     }
     dataset = datasets[sys.argv[2]] if len(sys.argv) > 2 else datasets["UFW22"]
 
@@ -46,7 +48,7 @@ if __name__ == '__main__':
         edge_dim = dataset.edge_features
         ),
     }
-    model = models[sys.argv[1]] if len(sys.argv) > 1 else models["try2"]
+    model = models[sys.argv[1]] if len(sys.argv) > 1 else models["try1"]
     
     # If we train on tensor cores as well
     torch.set_float32_matmul_precision('high')
