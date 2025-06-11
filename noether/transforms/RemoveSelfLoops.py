@@ -35,6 +35,9 @@ class RemoveSelfLoops(BaseTransform):
         for store in data.edge_stores:
             if store.is_bipartite():
                 continue
+            # Skip empty stores
+            if torch.numel(store.edge_index) == 0:
+                continue
             
             keys = [key for key in self.attr if key in store]
             mask = find_self_loops(store.edge_index)

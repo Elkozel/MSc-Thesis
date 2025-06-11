@@ -36,6 +36,7 @@ class RemoveDuplicatedEdges(BaseTransform):
         
     @staticmethod
     def find_duplicated_edges(edge_index: torch.Tensor):
+    
         _, indexes = torch.unique(edge_index, dim=1, return_inverse=True)
         return torch.unique(indexes)
 
@@ -45,6 +46,10 @@ class RemoveDuplicatedEdges(BaseTransform):
     ) -> Union[Data, HeteroData]:
 
         for store in data.edge_stores:
+            # Skip empty stores
+            if torch.numel(store.edge_index) == 0:
+                continue
+            
             keys = [key for key in self.keys if key in store]
             mask = RemoveDuplicatedEdges.find_duplicated_edges(store.edge_index)
             
