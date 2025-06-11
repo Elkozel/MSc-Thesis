@@ -245,6 +245,7 @@ class UFW22L(L.LightningDataModule):
         servicemap_df = servicemap_df.reset_index()
         servicemap_df["service_id"] = servicemap_df.index
         servicemap_df['host_id'] = servicemap_df['ip'].map(hostmap_df["host_id"])
+        servicemap_df['isknown'] = servicemap_df['port'] < 1024
 
         servicemap_df.to_pickle(self.servicemap_file)
 
@@ -507,7 +508,7 @@ class UFW22L(L.LightningDataModule):
             data = list(self.df_to_data(df, bins))
             data_transformed: List[BaseData] = list(map(self.transform_data, data))
             for batch_num, batch_i in enumerate(range(0, len(data_transformed), self.batch_size)):
-                batch = SimpleBatch.from_list(data_transformed[batch_i:batch_i+self.batch_size])
+                batch = Batch.from_data_list(data_transformed[batch_i:batch_i+self.batch_size])
                 stage_num = 0
                 if stage == "val":
                     stage_num = 1
