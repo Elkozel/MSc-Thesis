@@ -5,8 +5,9 @@ from torch_geometric.data.data import BaseData
 
 class SimpleBatch(Data):
     @classmethod
-    def from_list(cls, graphs: List[BaseData]) -> Self:
+    def from_data_list(cls, graphs: List[BaseData]) -> Self:
         all_edges = [g.edge_index for g in graphs if g.edge_index is not None]
+        all_edge_attr = [g.edge_attr for g in graphs if g.edge_attr is not None]
         all_y = [g.y for g in graphs if isinstance(g.y, torch.Tensor)]
 
         ptr = [0]
@@ -18,6 +19,7 @@ class SimpleBatch(Data):
         batch.x = graphs[0].x
         batch.y = torch.cat(all_y)
         batch.edge_index = torch.cat(all_edges, dim=1)
+        batch.edge_attr = torch.cat(all_edge_attr)
         batch.ptr = ptr
 
         return batch
@@ -30,6 +32,7 @@ class SimpleBatch(Data):
     def get_example(self, idx):
         # Assertions
         assert self.edge_index is not None
+        assert self.edge_attr is not None
         assert self.x is not None
         assert isinstance(self.y, torch.Tensor)
 
@@ -39,9 +42,14 @@ class SimpleBatch(Data):
 
         # Mask for selecting edges
         edge_index = self.edge_index[:, start:end]
+        edge_attr = self.edge_attr[start:end]
         y = self.y[start:end]
 
-        return Data(x=self.x, edge_index=edge_index, y=y)
+        return Data(
+            x=self.x, 
+            edge_index=edge_index,
+            edge_attr=edge_attr,
+            y=y)
     
     def index_select(self, idxs):
         """

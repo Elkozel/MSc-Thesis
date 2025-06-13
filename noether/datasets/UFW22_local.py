@@ -397,8 +397,6 @@ class UFW22L(L.LightningDataModule):
             
             # Otherwise, determine how many adjustments will need to be made
             all_ts = np.arange(start_ts, end_ts, self.bin_size)[:-1] # cut the last one (we already have the original event)
-            if all_ts.size < 1:
-                print("Welp")
             all_ts = np.append(all_ts, end_ts) # add the original event
 
             open_conn_states = ["open" for _ in range(all_ts.size - 2)]
@@ -412,10 +410,17 @@ class UFW22L(L.LightningDataModule):
         df.loc[mask, ["ts", "conn_status"]] = df[mask].apply(expand, axis=1)
         df = df.explode(["ts", "conn_status"])
         df["conn_status"] = df["conn_status"].map(self.conn_status_map)
-        # Resort
-        df["ts"] = df["ts"].astype("int")
+
+        # Recast to a float
+        df["ts"] = df["ts"].astype("float")
+
+        # Remove events with negative ts
+        df = df[df["ts"] >= 0.0]
+
+        # Sort by time
         df = df.sort_values(by=['ts'])  # Sort records chronologically
         df = df.reset_index(drop=True)  # Reset index after sorting
+
         return df
 
     def transform_data(self, data: Union[Data, HeteroData]) -> BaseData:
@@ -427,10 +432,10 @@ class UFW22L(L.LightningDataModule):
         # Cut the data into bins
         df_data["bin"] = pd.cut(df_data["ts"], bins, ordered=True, labels=False, right=False)
         bin_ranges = []
-        for bin in bins:
-            df_bin = df_data[df_data["bin"] == bin]
+        for bin_id in range(len(bins)):
+            df_bin = df_data[df_data["bin"] == bin_id]
             bin_ranges.append({
-                "bin": bin,
+                "bin": bin_id,
                 "empty": df_bin.empty,
                 "start": df_bin.index.min(),
                 "end": df_bin.index.max(),
@@ -442,7 +447,7 @@ class UFW22L(L.LightningDataModule):
         assert self.hostmap is not None
         
         data = Data()
-        data.time = torch.from_numpy(df["ts"].to_numpy()).to(dtype=torch.int64)
+        data.time = torch.from_numpy(df["ts"].to_numpy(dtype=float)).to(dtype=torch.float64)
         data.x = torch.from_numpy(self.hostmap[[
                 "internal",
                 "broadcast",
@@ -476,10 +481,10 @@ class UFW22L(L.LightningDataModule):
         for range in bin_ranges:
             if range["empty"]:
                 yield Data(
-                    time=torch.Tensor([]).to(torch.int64),
-                    edge_index=torch.Tensor([[], []]).to(torch.int64),
-                    edge_attr=torch.Tensor([]).to(torch.float32),
-                    y=torch.Tensor([]).to(torch.int64), # type: ignore
+                    time=torch.empty(size=[0]).to(torch.int64),
+                    edge_index=torch.empty(size=(2, 0)).to(torch.int64),
+                    edge_attr=torch.empty(size=(0, self.edge_features)).to(torch.float32),
+                    y=torch.empty(size=[0]).to(torch.int64),
                     x=data.x
                 )
             else:
@@ -508,7 +513,7 @@ class UFW22L(L.LightningDataModule):
             data = list(self.df_to_data(df, bins))
             data_transformed: List[BaseData] = list(map(self.transform_data, data))
             for batch_num, batch_i in enumerate(range(0, len(data_transformed), self.batch_size)):
-                batch = Batch.from_data_list(data_transformed[batch_i:batch_i+self.batch_size])
+                batch = SimpleBatch.from_data_list(data_transformed[batch_i:batch_i+self.batch_size])
                 stage_num = 0
                 if stage == "val":
                     stage_num = 1
