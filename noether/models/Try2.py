@@ -24,15 +24,15 @@ class GNNEncoder(nn.Module):
         self.dropout = dropout_rate
 
     def forward(self, x, edge_index, edge_features):
-        out = self.conv1(x, edge_index, edge_features)
+        out = self.conv1(x, edge_index, edge_attr=edge_features)
         out = self.norm1(out)
         out = F.relu(out)
         out = F.dropout(out, p=self.dropout, training=self.training)
-        out = self.conv2(out, edge_index, edge_features)
+        out = self.conv2(out, edge_index, edge_attr=edge_features)
         out = self.norm2(out)
         out = F.relu(out)
         out = F.dropout(out, p=self.dropout, training=self.training)
-        out = self.conv3(out, edge_index, edge_features)
+        out = self.conv3(out, edge_index, edge_attr=edge_features)
         out = self.norm3(out)
         return out  # node embeddings
     
@@ -149,10 +149,13 @@ class LitFullModel(L.LightningModule):
         return link_pred_scores, link_class_logits
     
     def run_trough_batch(self, batch: Batch, num_windows: int, step: Literal['train', 'validation', 'test']):
+        graph_list = batch.to_data_list()        
         total_loss = torch.tensor(0.0).to(self.device)
         total_pred_acc = torch.tensor(0.0).to(self.device)
         total_class_acc = torch.tensor(0.0).to(self.device)
-        features = [self.gnn(data.x, data.edge_index, data.edge_attr) for data in batch.to_data_list()]
+
+        
+        features = [self.gnn(data.x, data.edge_index, data.edge_attr) for data in graph_list]
         features = torch.stack(features)
             
         for i in range(num_windows):
