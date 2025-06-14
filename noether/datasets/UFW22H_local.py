@@ -40,6 +40,7 @@ class UFW22HL(UFW22L):
         data['host', 'uses', 'service'].edge_index = torch.from_numpy(
             df[["src_ip_id", "src_service_id"]].to_numpy().T
             ).to(torch.int64)
+        # TODO: Adde edge attr
         data.edge_attr = torch.empty((len(data), 0)).to(torch.float32)
 
         # Add (service) - communicates_with -> (service)
@@ -66,6 +67,7 @@ class UFW22HL(UFW22L):
         data['service', 'belongs_to', 'host'].edge_index = torch.from_numpy(
             df[["dest_service_id", "dest_ip_id"]].to_numpy().T
             ).to(torch.int64)
+        # TODO: Adde edge attr
         data['service', 'belongs_to', 'host'].edge_attr = torch.empty((len(data), 0)).to(torch.float32)
 
         # add labels
