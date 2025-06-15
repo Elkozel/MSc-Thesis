@@ -196,13 +196,15 @@ class LitFullModel(L.LightningModule):
             if positive_edges.any():
                 class_loss = F.cross_entropy(link_class, edge_labels.long())
                 self.mal_count.update(labels.bool().count_nonzero() / labels.size(0))
+                class_acc = self.link_class_acc(link_class, edge_labels.int())
             else:
                 class_loss = torch.tensor(0.0, device=self.device)
 
             loss = pred_loss + self.pred_alpha * class_loss
 
-            # Update loss metric
+            # Update metrics
             self.model_loss.update(loss)
+            pred_acc = self.link_predict_acc(link_pred, labels.int())
             
             total_loss += loss
 
