@@ -4,10 +4,11 @@ import torchmetrics
 import torch.nn as nn
 import lightning as L
 import torch.nn.functional as F
-from typing import Literal, Union
+from typing import List, Literal, Union
 from torch_geometric.nn import GATv2Conv
 from torch_geometric.utils import negative_sampling
 from torch_geometric.data import Data, Batch
+from torch_geometric.data.data import BaseData
 import torchmetrics.classification
 
 
@@ -112,6 +113,8 @@ class LitFullModel(L.LightningModule):
 
         self.link_predict_acc = torchmetrics.classification.BinaryAccuracy(threshold=binary_threshold)
         self.link_class_acc = torchmetrics.Accuracy(task="multiclass", num_classes=out_classes)
+        self.mal_count = torchmetrics.MeanMetric()
+        self.model_loss = torchmetrics.MeanMetric()
 
         self.rnn_window_size = rnn_window_size
         self.model_name = model_name
@@ -148,19 +151,20 @@ class LitFullModel(L.LightningModule):
 
         return link_pred_scores, link_class_logits
     
+    def precompute_features(self, graph_list: List[BaseData]) -> torch.Tensor:
+        features = [self.gnn(data.x, data.edge_index, data.edge_attr) for data in graph_list]
+        features = torch.stack(features)
+        return features
+        
+    
     def run_trough_batch(self, batch: Batch, num_windows: int, step: Literal['train', 'validation', 'test']):
         graph_list = batch.to_data_list()        
         total_loss = torch.tensor(0.0).to(self.device)
-        total_pred_acc = torch.tensor(0.0).to(self.device)
-        total_class_acc = torch.tensor(0.0).to(self.device)
-
-        
-        features = [self.gnn(data.x, data.edge_index, data.edge_attr) for data in graph_list]
-        features = torch.stack(features)
+        gnn_features = self.precompute_features(graph_list)
             
         for i in range(num_windows):
             to_idx = i + self.rnn_window_size
-            x_features = features[i:to_idx]
+            x_features = gnn_features[i:to_idx]
             y_graph = batch.get_example(to_idx)
             
             assert y_graph.edge_index is not None
@@ -191,27 +195,24 @@ class LitFullModel(L.LightningModule):
             link_class = link_class[labels.bool()]
             if positive_edges.any():
                 class_loss = F.cross_entropy(link_class, edge_labels.long())
-                class_acc = self.link_class_acc(link_class, edge_labels.int())
+                self.mal_count.update(labels.bool().count_nonzero() / labels.size(0))
             else:
                 class_loss = torch.tensor(0.0, device=self.device)
-                class_acc = torch.tensor(0.0, device=self.device)
 
             loss = pred_loss + self.pred_alpha * class_loss
-            pred_acc = self.link_predict_acc(link_pred, labels.int())
-            
+
+            # Update loss metric
+            self.model_loss.update(loss)
             
             total_loss += loss
-            total_pred_acc += pred_acc
-            total_class_acc += class_acc
 
         avg_loss = total_loss / num_windows
-        avg_pred_acc = total_pred_acc / num_windows
-        avg_class_acc = total_class_acc / num_windows
 
         return {
             "avg_loss": avg_loss,
-            "avg_pred_acc": avg_pred_acc,
-            "avg_class_acc": avg_class_acc
+            "avg_pred_acc": self.link_predict_acc.compute(),
+            "avg_class_acc": self.link_class_acc.compute(),
+            "avg_mal_count": self.mal_count.compute()
         }
 
     def training_step(self, batch: Batch, batch_idx):
@@ -229,6 +230,7 @@ class LitFullModel(L.LightningModule):
         self.log("train_loss", results["avg_loss"], batch_size=batch.num_graphs, on_epoch=True)
         self.log("train_pred_acc", results["avg_pred_acc"], batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
         self.log("train_class_acc", results["avg_class_acc"], batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
+        self.log("train_mal_count", results["avg_mal_count"], batch_size=batch.num_graphs)
 
         return results["avg_loss"]
     
