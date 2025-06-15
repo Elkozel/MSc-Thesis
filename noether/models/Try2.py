@@ -195,8 +195,8 @@ class LitFullModel(L.LightningModule):
             link_class = link_class[labels.bool()]
             if positive_edges.any():
                 class_loss = F.cross_entropy(link_class, edge_labels.long())
-                self.mal_count.update(labels.bool().count_nonzero() / labels.size(0))
                 class_acc = self.link_class_acc(link_class, edge_labels.int())
+                self.mal_count.update(edge_labels.count_nonzero() / edge_labels.size(0))
             else:
                 class_loss = torch.tensor(0.0, device=self.device)
 
@@ -251,6 +251,7 @@ class LitFullModel(L.LightningModule):
         self.log("val_loss", results["avg_loss"], batch_size=batch.num_graphs, on_epoch=True)
         self.log("val_pred_acc", results["avg_pred_acc"], batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
         self.log("val_class_acc", results["avg_class_acc"], batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
+        self.log("val_mal_count", results["avg_mal_count"], batch_size=batch.num_graphs)
 
         return results["avg_loss"]
     
