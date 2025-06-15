@@ -457,7 +457,7 @@ class UFW22L(L.LightningDataModule):
                 "valid",
         ]].to_numpy()).to(torch.float32)
         data.edge_index = torch.from_numpy(df[["src_ip_id", "dest_ip_id"]].to_numpy().T).to(torch.int64)
-        data.edge_attr = torch.from_numpy(df[[
+        data.edge_attr = torch.nan_to_num(torch.from_numpy(df[[
                 "conn_status",
                 "src_port_zeek",
                 "dest_port_zeek",
@@ -474,7 +474,7 @@ class UFW22L(L.LightningDataModule):
                 "conn_state"
                 # TODO: Add info about the port
                 # TODO: Add history
-        ]].astype(float).to_numpy()).to(torch.float32)
+        ]].astype(float).to_numpy()).to(torch.float32))
         data.y = torch.from_numpy(df["label_tactic"].to_numpy()).to(torch.int64)
 
         # Generate bins
