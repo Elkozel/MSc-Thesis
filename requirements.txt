@@ -10,3 +10,5 @@ torchmetrics
 pytest
 networkx-temporal[draw]
 urllib3
+ordered-set
+transformers
