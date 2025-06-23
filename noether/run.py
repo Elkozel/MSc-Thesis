@@ -15,6 +15,7 @@ from models.Try2 import LitFullModel as Try2
 from models.Try2H import LitFullModel as Try2H
 from datasets.UFW22_local import UFW22L
 from datasets.UFW22H_local import UFW22HL
+from datasets.LANL_local import LANLL
 
 if __name__ == '__main__':
     # Initialize a Comet experiment for logging metrics
@@ -24,7 +25,7 @@ if __name__ == '__main__':
         workspace="elkozel"
     )
     model = "try2"
-    dataset = "UFW22"
+    dataset = "LANL"
 
     transformations = [
         RemoveDuplicatedEdges(key=["edge_attr", "edge_weight", "time", "y"]),
@@ -37,6 +38,12 @@ if __name__ == '__main__':
         dataset = UFW22L(DATASET_DIR, transforms=transformations)
     elif dataset == "UFW22H":
         dataset = UFW22HL(DATASET_DIR, transforms=transformations)
+    elif dataset == "LANL":
+        dataset = LANLL(
+            DATASET_DIR, 
+            download=True, 
+            lanl_URL="https://csr.lanl.gov/data-fence/1750630801/cCYJvf9djgkHXw9h_OxGBC8wYyQ=/cyber1/", 
+            transforms=transformations)
     else:
         raise NotImplementedError(f"Dataset {dataset} is not implemented")
 
