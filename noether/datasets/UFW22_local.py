@@ -475,6 +475,11 @@ class UFW22L(L.LightningDataModule):
                 # TODO: Add info about the port
                 # TODO: Add history
         ]].astype(float).to_numpy()).to(torch.float32))
+        data.history = df[[
+                "history"
+                # TODO: Add info about the port
+                # TODO: Add history
+        ]].to_numpy()
         data.y = torch.from_numpy(df["label_tactic"].to_numpy()).to(torch.int64)
 
         # Generate bins
@@ -485,6 +490,7 @@ class UFW22L(L.LightningDataModule):
                     edge_index=torch.empty(size=(2, 0)).to(torch.int64),
                     edge_attr=torch.empty(size=(0, self.edge_features)).to(torch.float32),
                     y=torch.empty(size=[0]).to(torch.int64),
+                    history=torch.empty(size=[0]),
                     x=data.x
                 )
             else:
@@ -495,6 +501,7 @@ class UFW22L(L.LightningDataModule):
                     edge_index=data.edge_index[:, start_idx:end_idx],
                     edge_attr=data.edge_attr[start_idx:end_idx],
                     y=data.y[start_idx:end_idx], # type: ignore
+                    history=data.history[start_idx:end_idx],
                     x=data.x
                 )
 
