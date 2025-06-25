@@ -17,9 +17,6 @@ from transformers import T5ForConditionalGeneration, AutoTokenizer
 class GNNEncoder(nn.Module):
     def __init__(self, in_channels, hidden_channels, dropout_rate, edge_dim):
         super().__init__()
-        # LLM for history encoding
-        self.llm = T5ForConditionalGeneration.from_pretrained('google/byt5-small')
-        self.llm_tokenizer = AutoTokenizer.from_pretrained('google/byt5-small')
 
         self.conv1 = GATv2Conv(in_channels, hidden_channels*3, edge_dim=edge_dim)
         self.norm1 = nn.LayerNorm(hidden_channels*3)
@@ -105,12 +102,16 @@ class LitFullModel(L.LightningModule):
         binary_threshold = 0.5,
         negative_edge_sampling_min = 20,
         pred_alpha = 0.8,
-        model_name="Try2"
+        model_name="Try3"
     ):
         super().__init__()
 
         if hidden_channels is None:
             hidden_channels = in_channels * 3
+
+        # LLM for history encoding
+        self.llm = T5ForConditionalGeneration.from_pretrained('google/byt5-small')
+        self.llm_tokenizer = AutoTokenizer.from_pretrained('google/byt5-small')
 
         self.gnn = GNNEncoder(in_channels, hidden_channels, dropout_rate, edge_dim)
         self.rnn = RNNEncoder(hidden_channels, rnn_num_layers)
@@ -130,6 +131,28 @@ class LitFullModel(L.LightningModule):
 
         self.save_hyperparameters()
 
+    def add_history_to_edge_attr(self, graph: Data):
+        # Return if history is not present
+        if graph.history is None:
+            return
+        
+        # Get the history
+        history = graph.history
+
+        # Tokenize the histories and generate embeddings
+        model_inputs = self.llm_tokenizer(history, padding="longest", return_tensors="pt")
+        embeddings = self.llm(**model_inputs)
+
+        # Add the embeddings inside the edge attributes
+        edge_attr = graph.edge_attr
+        if edge_attr is None:
+            graph.edge_attr = embeddings
+        else:
+            graph.edge_attr = torch.cat([
+                edge_attr,
+                embeddings
+            ], dim=1)
+        return graph
 
     def forward(self, graph_sequence: Union[list[Data], torch.Tensor], edge_pairs):
         # Generate the features at each timestamp if not already computed
@@ -157,14 +180,21 @@ class LitFullModel(L.LightningModule):
 
         return link_pred_scores, link_class_logits
     
-    def precompute_features(self, graph_list: List[BaseData]) -> torch.Tensor:
-        features = [self.gnn(data.x, data.edge_index, data.edge_attr) for data in graph_list]
-        features = torch.stack(features)
-        return features
+    def precompute_features(self, graph_list: List[Data]) -> torch.Tensor:
+        all_features = []
+        for graph in graph_list:
+            # Add history
+            self.add_history_to_edge_attr(graph)
+            # Precompute all other features
+            features = self.gnn(graph.x, graph.edge_index, graph.edge_attr)
+            all_features.append(features)
+
+        # Concatenate all features into one tensor
+        return torch.stack(all_features)
         
     
     def run_trough_batch(self, batch: Batch, num_windows: int, step: Literal['train', 'validation', 'test']):
-        graph_list = batch.to_data_list()        
+        graph_list: List[Data] = batch.to_data_list()         # type: ignore
         total_loss = torch.tensor(0.0).to(self.device)
         gnn_features = self.precompute_features(graph_list)
             
