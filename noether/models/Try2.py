@@ -111,8 +111,12 @@ class LitFullModel(L.LightningModule):
         self.link_pred = LinkPredictor(hidden_channels, 1)
         self.link_classifier = LinkTypeClassifier(hidden_channels, out_classes)
 
-        self.link_predict_acc = torchmetrics.classification.BinaryAccuracy(threshold=binary_threshold)
+        self.link_predict_acc = torchmetrics.Accuracy(task="binary", threshold=binary_threshold)
+        self.link_predict_auc = torchmetrics.AUROC(task="binary")
+
         self.link_class_acc = torchmetrics.Accuracy(task="multiclass", num_classes=out_classes)
+        self.link_class_auc = torchmetrics.AUROC(task="multiclass", num_classes=out_classes)
+
         self.mal_count = torchmetrics.MeanMetric()
         self.model_loss = torchmetrics.MeanMetric()
 
@@ -196,6 +200,7 @@ class LitFullModel(L.LightningModule):
             if positive_edges.any():
                 class_loss = F.cross_entropy(link_class, edge_labels.long())
                 class_acc = self.link_class_acc(link_class, edge_labels.int())
+                class_auc = self.link_class_auc(link_class, edge_labels.int())
                 self.mal_count.update(edge_labels.count_nonzero() / edge_labels.size(0))
             else:
                 class_loss = torch.tensor(0.0, device=self.device)
@@ -205,6 +210,7 @@ class LitFullModel(L.LightningModule):
             # Update metrics
             self.model_loss.update(loss)
             pred_acc = self.link_predict_acc(link_pred, labels.int())
+            pred_auc = self.link_predict_auc(link_pred, labels.int())
             
             total_loss += loss
 
@@ -213,7 +219,9 @@ class LitFullModel(L.LightningModule):
         return {
             "avg_loss": avg_loss,
             "avg_pred_acc": self.link_predict_acc.compute(),
+            "avg_pred_auc": self.link_predict_auc.compute(),
             "avg_class_acc": self.link_class_acc.compute(),
+            "avg_class_auc": self.link_class_auc.compute(),
             "avg_mal_count": self.mal_count.compute()
         }
 
@@ -230,7 +238,9 @@ class LitFullModel(L.LightningModule):
         
         # Logging
         self.log("train_loss", results["avg_loss"], batch_size=batch.num_graphs, on_epoch=True)
+        self.log("train_pred_auc", results["avg_pred_auc"], batch_size=batch.num_graphs)
         self.log("train_pred_acc", results["avg_pred_acc"], batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
+        self.log("train_class_auc", results["avg_class_auc"], batch_size=batch.num_graphs)
         self.log("train_class_acc", results["avg_class_acc"], batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
         self.log("train_mal_count", results["avg_mal_count"], batch_size=batch.num_graphs)
 
