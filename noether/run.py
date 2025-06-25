@@ -32,17 +32,16 @@ if __name__ == '__main__':
         RemoveSelfLoops(attr=["edge_attr", "edge_weight", "time", "y"]),
         # AddInOutDegree()
     ]
-    DATASET_DIR = "/data/datasets/UWF22"
 
     if dataset == "UFW22":
-        dataset = UFW22L(DATASET_DIR, transforms=transformations)
+        dataset = UFW22L("/data/datasets/UWF22", transforms=transformations)
     elif dataset == "UFW22H":
-        dataset = UFW22HL(DATASET_DIR, transforms=transformations)
+        dataset = UFW22HL("/data/datasets/UWF22", transforms=transformations)
     elif dataset == "LANL":
         dataset = LANLL(
-            DATASET_DIR, 
+            "/data/datasets/LANL",
             download=True, 
-            lanl_URL="https://csr.lanl.gov/data-fence/1750630801/cCYJvf9djgkHXw9h_OxGBC8wYyQ=/cyber1/", 
+            lanl_URL="https://csr.lanl.gov/data-fence/1750885650/Eao2ITLSwQl4pLAxzgE-vjOVk9Q=/cyber1/", 
             transforms=transformations)
     else:
         raise NotImplementedError(f"Dataset {dataset} is not implemented")
