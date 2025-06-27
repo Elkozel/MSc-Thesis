@@ -10,8 +10,6 @@ from torch_geometric.utils import negative_sampling
 from torch_geometric.data import Data, Batch
 import torchmetrics.classification
 
-from utils.SimpleBatch import SimpleBatch
-
 
 class GNNEncoder(nn.Module):
     def __init__(self, in_channels, hidden_channels):

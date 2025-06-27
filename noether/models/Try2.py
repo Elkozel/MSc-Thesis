@@ -9,7 +9,6 @@ from torch_geometric.nn import GATv2Conv
 from torch_geometric.utils import negative_sampling
 from torch_geometric.data import Data, Batch
 from torch_geometric.data.data import BaseData
-import torchmetrics.classification
 
 
 class GNNEncoder(nn.Module):
