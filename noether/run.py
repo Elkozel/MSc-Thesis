@@ -7,7 +7,6 @@ from transforms.AddInOutDegree import AddInOutDegree
 from transforms.RemoveSelfLoops import RemoveSelfLoops
 from transforms.RemoveDuplicatedEdges import RemoveDuplicatedEdges
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
-import sys
 
 import lightning as L
 
@@ -19,14 +18,13 @@ from datasets.UFW22_local import UFW22L
 from datasets.UFW22H_local import UFW22HL
 from datasets.LANL_local import LANLL
 
-
 def parse_args():
     parser = argparse.ArgumentParser(description="Train and test a GNN model with Comet logging")
     
-    parser.add_argument('--model', type=str, choices=['try1', 'try2', 'try2h', 'try3'], required=True,
-                        help="Model type to use")
-    parser.add_argument('--dataset', type=str, choices=['UFW22', 'UFW22h', 'LANL'], required=True,
-                        help="Dataset to use")
+    parser.add_argument('--model', type=str, choices=['try1', 'try2', 'try2h', 'try3'],
+                        help="Model type to use", default="try2")
+    parser.add_argument('--dataset', type=str, choices=['UFW22', 'UFW22h', 'LANL'],
+                        help="Dataset to use", default="LANL")
     parser.add_argument('--max-epochs', type=int, default=50,
                         help="Maximum number of training epochs")
     
@@ -49,7 +47,7 @@ def main():
     transformations = [
         RemoveDuplicatedEdges(key=["edge_attr", "edge_weight", "time", "y"]),
         RemoveSelfLoops(attr=["edge_attr", "edge_weight", "time", "y"]),
-        # AddInOutDegree()
+        AddInOutDegree()
     ]
 
     if args.dataset == "UFW22":
@@ -59,7 +57,6 @@ def main():
     elif args.dataset == "LANL":
         dataset = LANLL(
             "/data/datasets/LANL",
-            download=True, 
             lanl_URL="https://csr.lanl.gov/data-fence/1750885650/Eao2ITLSwQl4pLAxzgE-vjOVk9Q=/cyber1/", 
             transforms=transformations)
     else:
@@ -74,7 +71,7 @@ def main():
         )
     elif args.model == "try2":
         model = Try2(
-        dataset.node_features,
+        dataset.node_features + 2,
         out_classes = dataset.num_classes,
         pred_alpha = 1.1,
         edge_dim = dataset.edge_features
@@ -114,3 +111,6 @@ def main():
                         callbacks=[EarlyStopping(monitor="val_loss", mode="min", check_on_train_epoch_end=False)]) # type: ignore
     trainer.fit(model, dataset)
     trainer.test(model, dataset)
+
+if __name__ == "__main__":
+    main()

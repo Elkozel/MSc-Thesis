@@ -15,13 +15,13 @@ class AddInOutDegree(BaseTransform):
         for store in data.node_stores:
             edge_index = data.edge_stores[0].edge_index
 
-            in_degree = degree(edge_index[0], store.num_nodes).unsqueeze(1)
-            out_degree = degree(edge_index[1], store.num_nodes).unsqueeze(1)
+            store.in_degree = degree(edge_index[0], store.num_nodes).unsqueeze(1)
+            store.out_degree = degree(edge_index[1], store.num_nodes).unsqueeze(1)
 
-            store = torch.cat([
+            store.x = torch.cat([
                 store.x,
-                in_degree,
-                out_degree
+                store.in_degree,
+                store.out_degree
             ], dim=1)
 
         return data

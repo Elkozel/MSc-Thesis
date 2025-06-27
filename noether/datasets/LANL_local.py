@@ -31,7 +31,7 @@ class LANLL(L.LightningDataModule):
                  bin_size: int = 20,
                  batch_size: int = 350,
                  from_time: int = 0,
-                 to_time: int = 700,
+                 to_time: int = 70000,
                  lanl_URL: Optional[str] = None,
                  transforms: list = []):
         super().__init__()
@@ -42,7 +42,7 @@ class LANLL(L.LightningDataModule):
         self.batch_size = batch_size
         self.transforms = transforms
         self.edge_features = 4
-        self.node_features = 1
+        self.node_features = 0
         self.num_classes = 2
         if lanl_URL is not None:
             self.auth_file = {
@@ -103,7 +103,6 @@ class LANLL(L.LightningDataModule):
             # Use map to apply download_file to all argument tuples in parallel
             pool.map(lambda x: self.download_file(*x), args)
 
-            
     def prepare_data(self):
         self.download_all_files()
 
@@ -131,6 +130,20 @@ class LANLL(L.LightningDataModule):
     def setup(self, stage: str):
         # Generate the batch masks
         self.generate_split()
+
+        # Load redteam
+        redteam_header = [
+            "time",
+            "user@domain",
+            "source computer",
+            "destination computer"
+        ]
+        self.redteam = pd.read_csv(
+            self.redteam_file["file"], 
+            sep=',', 
+            compression='gzip',
+            names=redteam_header, 
+            header=None).drop_duplicates()
 
     def transform_data(self, data: Union[Data, HeteroData]) -> BaseData:
         for transform in self.transforms:
@@ -169,9 +182,6 @@ class LANLL(L.LightningDataModule):
             iterator=True, 
             names=columns, 
             header=None):
-            # Merge leftover from previous chunk if any
-            if not leftover.empty:
-                part = pd.concat([leftover, part], ignore_index=True)
 
             # Ensure 'time' is numeric
             part['time'] = pd.to_numeric(part['time'], errors='coerce')
@@ -179,18 +189,21 @@ class LANLL(L.LightningDataModule):
             part.sort_values(by='time', inplace=True)
 
             # Find only data between the time given
-            part = part[(part["time"] >= self.from_time | part["time"] < self.to_time)]
+            part = part[(part["time"] >= self.from_time) & (part["time"] < self.to_time)]
             if part.empty:
                 leftover = pd.DataFrame([])
                 continue
+
+            # Merge the data with redteam (attaching labels)
+            part = self.merge_with_redteam(part)
 
             # Update keyword map
             for col in self.keyword_map:
                 self.keyword_map[col].update(part[col].dropna().unique()) # type: ignore
             self.hostmap.update(part["source computer"].dropna().unique()) # type: ignore
             self.hostmap.update(part["destination computer"].dropna().unique()) # type: ignore
-            self.keyword_map.update(part["source user@domain"].dropna().unique()) # type: ignore
-            self.keyword_map.update(part["destination user@domain"].dropna().unique()) # type: ignore
+            self.usermap.update(part["source user@domain"].dropna().unique()) # type: ignore
+            self.usermap.update(part["destination user@domain"].dropna().unique()) # type: ignore
 
             # Apply the keyword map
             for col in self.keyword_map:
@@ -200,13 +213,17 @@ class LANLL(L.LightningDataModule):
             part["source user@domain"] = part["source user@domain"].map(self.usermap.index)
             part["destination user@domain"] = part["destination user@domain"].map(self.usermap.index)
 
+            # Merge leftover from previous chunk if any
+            if not leftover.empty:
+                part = pd.concat([leftover, part], ignore_index=True)
+
             # Bin the data
             part['bin'] = (part['time'] // self.bin_size) * self.bin_size
-            grouped = part.groupby('bin')
+            grouped = list(part.groupby('bin'))
 
             # Assume that the last bin is incomplete
             # if it is complete, it will be sent with the next batch
-            _, leftover = grouped.pop() # type: ignore
+            _, leftover = grouped.pop()
 
             for _, group in grouped:
                 yield group
@@ -237,53 +254,43 @@ class LANLL(L.LightningDataModule):
             yield batch
     
     def merge_with_redteam(self, df: pd.DataFrame):
-        redteam_header = [
-            "time",
-            "user@domain",
-            "source computer",
-            "destination computer"
-        ]
-        redteam = pd.read_csv(
-            self.redteam_file["file"], 
-            sep=',', 
-            compression='gzip',
-            names=redteam_header, 
-            header=None)
         
         # First, do a merge on source_user
         merge_source = pd.merge(
             df,
-            redteam,
-            left_on=['time', 'source_user', 'source_computer', 'destination_computer'],
-            right_on=['time', 'user', 'source_computer', 'destination_computer'],
+            self.redteam,
+            left_on=['time', 'source user@domain', 'source computer', 'destination computer'],
+            right_on=['time', 'user@domain', 'source computer', 'destination computer'],
             how='left',
+            validate='many_to_one',
             indicator='source_match'
-        )
+        ).reset_index(drop=True)
 
         # Then, do a merge on destination_user
         merge_dest = pd.merge(
             df,
-            redteam,
-            left_on=['time', 'destination_user', 'source_computer', 'destination_computer'],
-            right_on=['time', 'user', 'source_computer', 'destination_computer'],
+            self.redteam,
+            left_on=['time', 'destination user@domain', 'source computer', 'destination computer'],
+            right_on=['time', 'user@domain', 'source computer', 'destination computer'],
             how='left',
+            validate='many_to_one',
             indicator='dest_match'
-        )
+        ).reset_index(drop=True)
 
         # Add flags
         merge_source['source_malicious'] = merge_source['source_match'] == 'both'
         merge_dest['destination_malicious'] = merge_dest['dest_match'] == 'both'
-
-        df['malicious'] = merge_source['source_malicious'] | merge_dest['destination_malicious']
+        df = df.reset_index(drop=True)
+        
+        df["malicious"] = False
+        df["malicious"] = merge_source['source_malicious'] | merge_dest['destination_malicious']
 
         return df
 
     def df_to_data(self, df: pd.DataFrame):
-        df = self.merge_with_redteam(df)
-
         data = Data()
         data.time = torch.from_numpy(df["time"].to_numpy(dtype=float)).to(dtype=torch.float64)
-        data.x = torch.zeros(len(self.hostmap))
+        data.x = torch.zeros((len(self.hostmap), 0))
         data.edge_index = torch.from_numpy(df[["source computer", "destination computer"]].to_numpy().T).to(torch.int64)
         data.edge_attr = torch.nan_to_num(torch.from_numpy(df[[
             "authentication type",
@@ -326,9 +333,8 @@ class CustomBatchDataset(torch.utils.data.IterableDataset):
         self._length = self.calulate_length() if estimated_len == 0 else estimated_len
 
     def calulate_length(self):
-        all_masks = list(self.data_module.file_masks.values())
-        lengts = [torch.sum(mask == self.stage) for mask in all_masks]
-        return sum(lengts)
+        lengts = torch.sum(self.data_module.batch_mask == self.stage)
+        return int(lengts)
     
     def __iter__(self):
         return self.data_module.batch_generator(self.stage)
