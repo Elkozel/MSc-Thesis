@@ -5,7 +5,7 @@ import os
 import math
 import numpy as np
 import logging
-from typing import Any, Hashable, List, Literal, Optional, Union
+from typing import Any, Generator, Hashable, List, Literal, Optional, Union
 import requests
 import torch
 from tqdm import tqdm
@@ -30,22 +30,21 @@ class LANLL(L.LightningDataModule):
                  data_dir,
                  bin_size: int = 20,
                  batch_size: int = 350,
-                 download: bool = False, 
+                 from_time: int = 0,
+                 to_time: int = 700,
                  lanl_URL: Optional[str] = None,
-                 file_data: str = "filedata.json",
                  transforms: list = []):
         super().__init__()
         self.data_dir = data_dir
         self.bin_size = bin_size
+        self.from_time = from_time
+        self.to_time = to_time
         self.batch_size = batch_size
-        self.download = download
-        self.file_data = os.path.join(data_dir, file_data)
         self.transforms = transforms
         self.edge_features = 4
         self.node_features = 1
         self.num_classes = 2
-        if self.download:
-            assert lanl_URL is not None, "Download URL should be set if download is True"
+        if lanl_URL is not None:
             self.auth_file = {
                 "url": os.path.join(lanl_URL, "auth.txt.gz"),
                 "file": os.path.join(data_dir, "auth.txt.gz")
@@ -54,10 +53,6 @@ class LANLL(L.LightningDataModule):
                 "url": os.path.join(lanl_URL, "redteam.txt.gz"),
                 "file": os.path.join(data_dir, "redteam.txt.gz")
             }
-            self.download_all_files()
-    
-    def check_files(self):
-        return os.path.exists(self.file_data)
     
     def download_file(self, url, filepath, tqdm_pos=0):
         # Send a GET request to the URL with streaming enabled so we can read it in chunks
@@ -92,7 +87,11 @@ class LANLL(L.LightningDataModule):
         if all([os.path.exists(os.path.join(self.data_dir, link["file"])) for link in download_links]):
             return  # If so, skip downloading
 
-        # Create a thread pool with 8 worker threads
+        assert self.auth_file is not None, "Dataset files could not be found, \
+            please specify a download URL to download them (see lanl_URL argument)"
+        assert self.redteam_file is not None, "Dataset files could not be found, \
+            please specify a download URL to download them (see lanl_URL argument)"
+        # Create a thread pool with 2 worker threads
         with ThreadPool(2) as pool:
             # Prepare arguments: (url, destination path, tqdm bar position) for each file
             args = [(
@@ -104,10 +103,41 @@ class LANLL(L.LightningDataModule):
             # Use map to apply download_file to all argument tuples in parallel
             pool.map(lambda x: self.download_file(*x), args)
 
-    def csv_auth_to_pickle(self, 
-                      file: str,
-                      file_data={}, 
-                      sec_per_file: int = 3600):
+            
+    def prepare_data(self):
+        self.download_all_files()
+
+    def generate_split(self):
+        # Randomly split the indices into training (60%), validation (25%), and test (15%) sets
+        generator = torch.Generator().manual_seed(42)
+        from_bin = (self.from_time // self.bin_size) * self.bin_size
+        to_bin = (self.to_time // self.bin_size) * self.bin_size
+        bin_range = range(from_bin, to_bin, self.bin_size)
+        num_batches = math.ceil(len(bin_range) / self.batch_size)
+
+        # Create full batch index tensor for this file
+        full_idx = torch.arange(num_batches)
+        idx = TensorDataset(full_idx)
+
+        _, val, test = random_split(idx, [0.6, 0.25, 0.15], generator=generator)
+
+        # Create mask: 0 = train, 1 = val, 2 = test
+        self.batch_mask = torch.zeros(num_batches, dtype=torch.uint8)
+        self.batch_mask[val.indices] = 1
+        self.batch_mask[test.indices] = 2
+
+        return self.batch_mask
+        
+    def setup(self, stage: str):
+        # Generate the batch masks
+        self.generate_split()
+
+    def transform_data(self, data: Union[Data, HeteroData]) -> BaseData:
+        for transform in self.transforms:
+            data = transform(data)
+        return data
+    
+    def generate_bins(self) -> Generator[pd.DataFrame, Any, None]:
         leftover = pd.DataFrame([])
         columns = [
             'time',
@@ -121,12 +151,24 @@ class LANLL(L.LightningDataModule):
             'success/failure'
         ]
         # Maps for each column are also created automatically
-        keyword_map = {col: OrderedSet([]) for col in columns if col != 'time'}
+        self.keyword_map = {col: OrderedSet([]) for col in columns if col != 'time'}
+        self.keyword_map.pop("source computer", None)
+        self.keyword_map.pop("destination computer", None)
+        self.hostmap = OrderedSet([])
+
+        self.keyword_map.pop("source user@domain", None)
+        self.keyword_map.pop("destination user@domain", None)
+        self.usermap = OrderedSet([])
 
         # Read the CSV file in chunks
-        for part in tqdm(
-            pd.read_csv(file, sep=',', compression='gzip', chunksize=1000000, iterator=True, names=columns, header=None),
-            desc="Splitting CSV"):
+        for part in pd.read_csv(
+            self.auth_file["file"], 
+            sep=',', 
+            compression='gzip',
+            chunksize=100000, 
+            iterator=True, 
+            names=columns, 
+            header=None):
             # Merge leftover from previous chunk if any
             if not leftover.empty:
                 part = pd.concat([leftover, part], ignore_index=True)
@@ -136,115 +178,63 @@ class LANLL(L.LightningDataModule):
             part.dropna(subset=['time'], inplace=True)
             part.sort_values(by='time', inplace=True)
 
+            # Find only data between the time given
+            part = part[(part["time"] >= self.from_time | part["time"] < self.to_time)]
+            if part.empty:
+                leftover = pd.DataFrame([])
+                continue
+
             # Update keyword map
-            for col in keyword_map:
-                keyword_map[col].update(part[col].dropna().unique()) # type: ignore
+            for col in self.keyword_map:
+                self.keyword_map[col].update(part[col].dropna().unique()) # type: ignore
+            self.hostmap.update(part["source computer"].dropna().unique()) # type: ignore
+            self.hostmap.update(part["destination computer"].dropna().unique()) # type: ignore
+            self.keyword_map.update(part["source user@domain"].dropna().unique()) # type: ignore
+            self.keyword_map.update(part["destination user@domain"].dropna().unique()) # type: ignore
 
             # Apply the keyword map
-            for col in keyword_map:
-                part[col] = part[col].map(keyword_map[col].index)
+            for col in self.keyword_map:
+                part[col] = part[col].map(self.keyword_map[col].index)
+            part["source computer"] = part["source computer"].map(self.hostmap.index)
+            part["destination computer"] = part["destination computer"].map(self.hostmap.index)
+            part["source user@domain"] = part["source user@domain"].map(self.usermap.index)
+            part["destination user@domain"] = part["destination user@domain"].map(self.usermap.index)
 
             # Bin the data
-            part['bin'] = (part['time'] // sec_per_file) * sec_per_file
+            part['bin'] = (part['time'] // self.bin_size) * self.bin_size
             grouped = part.groupby('bin')
-            leftover = pd.DataFrame([])
 
-            for bin_start, group in grouped:
-                # If this is the last group, it may be incomplete — keep as leftover
-                if bin_start + sec_per_file > part[0].max(): # type: ignore
-                    leftover = group
-                    continue
+            # Assume that the last bin is incomplete
+            # if it is complete, it will be sent with the next batch
+            _, leftover = grouped.pop() # type: ignore
 
-                # Save the bin to a pickle file
-                fname = f"{bin_start}.pkl"
-                group.drop(columns='bin').to_pickle(fname)
-
-                # Record in file_data
-                file_data[bin_start] = {
-                    'file': fname,
-                    'min_ts': float(group["time"].min()),
-                    'max_ts': float(group["time"].max()),
-                    'rows': len(group)
-                }
+            for _, group in grouped:
+                yield group
 
         # Optionally process leftover after loop
         if not leftover.empty:
-            last_bin_start = (leftover[0].min() // sec_per_file) * sec_per_file
-            fname = f"{last_bin_start}_leftover.pkl"
-            leftover.drop(columns='bin').to_pickle(fname)
-            file_data[last_bin_start] = {
-                'file': fname,
-                'min_ts': float(leftover["time"].min()),
-                'max_ts': float(leftover["time"].max()),
-                'rows': len(leftover)
-            }
+            grouped = leftover.groupby('bin')
 
-        return file_data, keyword_map
-            
-    def prepare_data(self):
-        if self.check_files():
-            return
+            for _, group in grouped:
+                yield group
+
+    def generate_batches(self, batch_type):
+        batch_num = 0
+        batch: list[pd.DataFrame] = []
+        for bin in self.generate_bins():
+            # Collect bins
+            if len(batch) != self.batch_size:
+                batch.append(bin)
+                continue
+
+            # Create the batch and send it
+            if self.batch_mask[batch_num] == batch_type:
+                yield batch
+            batch = []
         
-        # Download files
-        self.download_all_files()
-        
-        # Create pickle files
-        file_data, maps = self.csv_auth_to_pickle(self.auth_file["file"])
-
-        # save the file data and the maps
-        pd.DataFrame(file_data).to_json(self.file_data)
-        for col, map in maps:
-            pd.DataFrame(map).to_pickle(os.path.join(self.data_dir, f"{col}.pkl"))
-
-
-    def generate_split(self):
-        # Reset the file mask
-        self.file_masks = {}
-
-        # Each file has the following data:
-        # {
-        #     'file': fname,
-        #     'min_ts': float(leftover["time"].min()),
-        #     'max_ts': float(leftover["time"].max()),
-        #     'rows': len(leftover)
-        # }
-        file_data = pd.read_json(self.file_data)
-        file_data["num_batches"] = (file_data["max_ts"] - file_data["min_ts"]) // self.bin_size
-
-        # Randomly split the indices into training (60%), validation (25%), and test (15%) sets
-        generator = torch.Generator().manual_seed(42)
-        num_batches = file_data["num_batches"]
-
-        for _, row in file_data.iterrows():
-            fname = row['file']
-            num_batches = int(row['num_batches'])
-
-            if num_batches == 0:
-                continue  # skip empty files
-
-            # Create full batch index tensor for this file
-            full_idx = torch.arange(num_batches)
-            idx = TensorDataset(full_idx)
-
-            _, val, test = random_split(idx, [0.6, 0.25, 0.15], generator=generator)
-
-            # Create mask: 0 = train, 1 = val, 2 = test
-            batch_mask = torch.zeros(num_batches, dtype=torch.uint8)
-            batch_mask[val.indices] = 1
-            batch_mask[test.indices] = 2
-
-            self.file_masks[fname] = batch_mask
-            
-        return self.file_masks
-        
-    def setup(self, stage: str):
-        # Generate the batch masks
-        self.generate_split()
-
-    def transform_data(self, data: Union[Data, HeteroData]) -> BaseData:
-        for transform in self.transforms:
-            data = transform(data)
-        return data
+        # Handle leftover bins
+        if len(batch) > 0:
+            yield batch
     
     def merge_with_redteam(self, df: pd.DataFrame):
         redteam_header = [
@@ -288,14 +278,12 @@ class LANLL(L.LightningDataModule):
 
         return df
 
-    def df_to_data(self, df: pd.DataFrame, bin_ranges: List[Any]):
-        df["bin"] = (df['time'] // self.bin_size) * self.bin_size
-        hostmap: pd.DataFrame = pd.read_pickle(os.path.join(self.data_dir, "source computer.pkl"))
+    def df_to_data(self, df: pd.DataFrame):
         df = self.merge_with_redteam(df)
 
         data = Data()
         data.time = torch.from_numpy(df["time"].to_numpy(dtype=float)).to(dtype=torch.float64)
-        data.x = torch.from_numpy(hostmap.to_numpy()).to(torch.float32)
+        data.x = torch.zeros(len(self.hostmap))
         data.edge_index = torch.from_numpy(df[["source computer", "destination computer"]].to_numpy().T).to(torch.int64)
         data.edge_attr = torch.nan_to_num(torch.from_numpy(df[[
             "authentication type",
@@ -305,51 +293,19 @@ class LANLL(L.LightningDataModule):
         ]].astype(float).to_numpy()).to(torch.float32))
         data.y = torch.from_numpy(df["malicious"].to_numpy()).to(torch.int64)
 
-        # Generate bins
-        for range in bin_ranges:
-            if range["empty"]:
-                yield Data(
-                    time=torch.empty(size=[0]).to(torch.int64),
-                    edge_index=torch.empty(size=(2, 0)).to(torch.int64),
-                    edge_attr=torch.empty(size=(0, self.edge_features)).to(torch.float32),
-                    y=torch.empty(size=[0]).to(torch.int64),
-                    x=data.x
-                )
-            else:
-                start_idx = int(range["start"])
-                end_idx = int(range["end"])
-                yield Data(
-                    time=data.time[start_idx:end_idx],
-                    edge_index=data.edge_index[:, start_idx:end_idx],
-                    edge_attr=data.edge_attr[start_idx:end_idx],
-                    y=data.y[start_idx:end_idx], # type: ignore
-                    x=data.x
-                )
+        return data
 
     def batch_generator(self, stage: Literal['train', 'val', 'test']):
-        file_data = pd.read_json(self.file_data)
-        for _, row in file_data.iterrows():
-            pkl_file = row['file']
-            from_ts = row["min_ts"]
-            to_ts = row["max_ts"]
-            batch_mask = self.file_masks[pkl_file]
+        stage_id = 0
+        if stage == "val":
+            stage_id = 1
+        elif stage == "test":
+            stage_id = 2
 
-            df = pd.read_pickle(os.path.join(self.data_dir, pkl_file))
-            data = list(self.df_to_data(df, list(range(from_ts, to_ts, self.bin_size))))
-            data_transformed: List[BaseData] = list(map(self.transform_data, data))
-            for batch_num, batch_i in enumerate(range(0, len(data_transformed), self.batch_size)):
-                batch = Batch.from_data_list(data_transformed[batch_i:batch_i+self.batch_size])
-                stage_num = 0
-                if stage == "val":
-                    stage_num = 1
-                elif stage == "test":
-                    stage_num = 2
-                if batch_mask[batch_num] != stage_num:
-                    continue
-
-                # if batch.num_graphs <= self.rnn_window:
-                #     continue
-                yield batch
+        for batch in self.generate_batches(stage_id):
+            batch = [self.df_to_data(bin) for bin in batch]
+            transformed_batch = [self.transform_data(bin) for bin in batch]
+            yield Batch.from_data_list(transformed_batch)
 
     def train_dataloader(self):
         dataset = CustomBatchDataset(self, stage="train")
