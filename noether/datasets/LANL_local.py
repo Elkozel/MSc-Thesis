@@ -29,7 +29,8 @@ class LANLL(L.LightningDataModule):
                  from_time: int = 0,
                  to_time: int = 70000,
                  lanl_URL: Optional[str] = None,
-                 transforms: list = []):
+                 transforms: list = [],
+                 dataset_name: str = "LANL"):
         super().__init__()
         self.data_dir = data_dir
         self.bin_size = bin_size
@@ -37,6 +38,7 @@ class LANLL(L.LightningDataModule):
         self.to_time = to_time
         self.batch_size = batch_size
         self.transforms = transforms
+        self.dataset_name = dataset_name
         self.edge_features = 4
         self.node_features = 0
         self.num_classes = 2
