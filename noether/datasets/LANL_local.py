@@ -233,7 +233,7 @@ class LANLL(L.LightningDataModule):
             for _, group in grouped:
                 yield group
 
-    def generate_batches(self, batch_type):
+    def generate_batches(self, batch_type: int | None = None):
         batch_num = 0
         batch: list[pd.DataFrame] = []
         for bin in self.generate_bins():
@@ -243,13 +243,16 @@ class LANLL(L.LightningDataModule):
                 continue
 
             # Create the batch and send it
-            if self.batch_mask[batch_num] == batch_type:
-                yield batch
+            if batch_type is None:
+                yield batch, int(self.batch_mask[batch_num])
+            elif self.batch_mask[batch_num] == batch_type:
+                yield batch, int(self.batch_mask[batch_num])
             batch = []
+            batch_num = batch_num + 1
         
         # Handle leftover bins
         if len(batch) > 0:
-            yield batch
+            yield batch, int(self.batch_mask[batch_num])
     
     def merge_with_redteam(self, df: pd.DataFrame):
         
@@ -307,7 +310,7 @@ class LANLL(L.LightningDataModule):
         elif stage == "test":
             stage_id = 2
 
-        for batch in self.generate_batches(stage_id):
+        for batch, _ in self.generate_batches(stage_id):
             batch = [self.df_to_data(bin) for bin in batch]
             transformed_batch = [self.transform_data(bin) for bin in batch]
             yield Batch.from_data_list(transformed_batch)
