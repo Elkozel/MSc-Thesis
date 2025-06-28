@@ -186,11 +186,16 @@ class LANLL(L.LightningDataModule):
             part.dropna(subset=['time'], inplace=True)
             part.sort_values(by='time', inplace=True)
 
+            # Skip until the start time has been reached
+            if part["time"].max() < self.from_time:
+                continue
+
             # Find only data between the time given
             part = part[(part["time"] >= self.from_time) & (part["time"] < self.to_time)]
             if part.empty:
                 leftover = pd.DataFrame([])
-                continue
+                break
+            
 
             # Merge the data with redteam (attaching labels)
             part = self.merge_with_redteam(part)
