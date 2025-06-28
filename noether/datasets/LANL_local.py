@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 class LANLL(L.LightningDataModule):
 
     def __init__(self, 
-                 data_dir,
+                 data_dir: str,
                  bin_size: int = 20,
                  batch_size: int = 350,
                  from_time: int = 0,
@@ -42,15 +42,15 @@ class LANLL(L.LightningDataModule):
         self.edge_features = 4
         self.node_features = 0
         self.num_classes = 2
+        
+        self.auth_file = {}
+        self.auth_file["file"] = os.path.join(data_dir, "auth.txt.gz")
+        self.redteam_file = {}
+        self.redteam_file["file"] = os.path.join(data_dir, "redteam.txt.gz")
+        
         if lanl_URL is not None:
-            self.auth_file = {
-                "url": os.path.join(lanl_URL, "auth.txt.gz"),
-                "file": os.path.join(data_dir, "auth.txt.gz")
-            }
-            self.redteam_file = {
-                "url": os.path.join(lanl_URL, "redteam.txt.gz"),
-                "file": os.path.join(data_dir, "redteam.txt.gz")
-            }
+            self.auth_file["url"] =  os.path.join(data_dir, "auth.txt.gz")
+            self.redteam_file["url"] = os.path.join(data_dir, "redteam.txt.gz")
     
     def download_file(self, url, filepath, tqdm_pos=0):
         # Send a GET request to the URL with streaming enabled so we can read it in chunks
