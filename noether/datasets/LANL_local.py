@@ -42,7 +42,9 @@ class LANLL(L.LightningDataModule):
         self.edge_features = 4
         self.node_features = 0
         self.num_classes = 2
-        
+
+        self.save_hyperparameters()
+
         self.auth_file = {}
         self.auth_file["file"] = os.path.join(data_dir, "auth.txt.gz")
         self.redteam_file = {}
@@ -94,7 +96,7 @@ class LANLL(L.LightningDataModule):
             # Prepare arguments: (url, destination path, tqdm bar position) for each file
             args = [(
                 file_data["url"], 
-                os.path.join(self.data_dir, file_data["file"]),
+                file_data["file"],
                 idx  # tqdm progress bar position (starts at 1)
             ) for idx, file_data in enumerate(download_links, 1)]
 
