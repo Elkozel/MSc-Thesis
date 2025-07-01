@@ -67,6 +67,7 @@ venv.bak/
 nodemap.bson
 maps.bson
 *.pkl
+*.parquet
 
 # Comet
 .comet.config
