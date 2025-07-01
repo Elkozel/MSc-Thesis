@@ -51,8 +51,8 @@ class LANLL(L.LightningDataModule):
         self.redteam_file["file"] = os.path.join(data_dir, "redteam.txt.gz")
         
         if lanl_URL is not None:
-            self.auth_file["url"] =  os.path.join(data_dir, "auth.txt.gz")
-            self.redteam_file["url"] = os.path.join(data_dir, "redteam.txt.gz")
+            self.auth_file["url"] =  os.path.join(lanl_URL, "auth.txt.gz")
+            self.redteam_file["url"] = os.path.join(lanl_URL, "redteam.txt.gz")
     
     def download_file(self, url, filepath, tqdm_pos=0):
         # Send a GET request to the URL with streaming enabled so we can read it in chunks
