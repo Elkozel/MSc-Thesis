@@ -27,7 +27,7 @@ class LANLL(L.LightningDataModule):
                  bin_size: int = 20,
                  batch_size: int = 350,
                  from_time: int = 0,
-                 to_time: int = 70000,
+                 to_time: int = 1209600, # First 14 days
                  lanl_URL: Optional[str] = None,
                  transforms: list = [],
                  dataset_name: str = "LANL"):
