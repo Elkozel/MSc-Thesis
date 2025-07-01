@@ -42,15 +42,17 @@ class LANLL(L.LightningDataModule):
         self.edge_features = 4
         self.node_features = 0
         self.num_classes = 2
-        
+
+        self.save_hyperparameters()
+
         self.auth_file = {}
         self.auth_file["file"] = os.path.join(data_dir, "auth.txt.gz")
         self.redteam_file = {}
         self.redteam_file["file"] = os.path.join(data_dir, "redteam.txt.gz")
         
         if lanl_URL is not None:
-            self.auth_file["url"] =  os.path.join(data_dir, "auth.txt.gz")
-            self.redteam_file["url"] = os.path.join(data_dir, "redteam.txt.gz")
+            self.auth_file["url"] =  os.path.join(lanl_URL, "auth.txt.gz")
+            self.redteam_file["url"] = os.path.join(lanl_URL, "redteam.txt.gz")
     
     def download_file(self, url, filepath, tqdm_pos=0):
         # Send a GET request to the URL with streaming enabled so we can read it in chunks
@@ -94,7 +96,7 @@ class LANLL(L.LightningDataModule):
             # Prepare arguments: (url, destination path, tqdm bar position) for each file
             args = [(
                 file_data["url"], 
-                os.path.join(self.data_dir, file_data["file"]),
+                file_data["file"],
                 idx  # tqdm progress bar position (starts at 1)
             ) for idx, file_data in enumerate(download_links, 1)]
 
