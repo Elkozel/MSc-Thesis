@@ -2,14 +2,14 @@ from typing import Any, List
 import pandas as pd
 import numpy as np
 import torch
-from datasets.UFW22_local import UFW22L
+from datasets.UWF22_local import UWF22L
 from torch_geometric.data import HeteroData
 
-from noether.transforms.EnrichService import EnrichService
-from noether.transforms.EnrichHost import EnrichHost
+from transforms.EnrichService import EnrichService
+from transforms.EnrichHost import EnrichHost
 
 
-class UFW22HL(UFW22L):
+class UWF22HL(UWF22L):
     """
     A heterogeneous graph representation of the UFW22 dataset.
     """

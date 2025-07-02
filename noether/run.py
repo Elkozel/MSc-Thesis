@@ -14,8 +14,8 @@ from models.Try1 import LitFullModel as Try1
 from models.Try2 import LitFullModel as Try2
 from models.Try2H import LitFullModel as Try2H
 from models.Try3 import LitFullModel as Try3
-from datasets.UFW22_local import UFW22L
-from datasets.UFW22H_local import UFW22HL
+from datasets.UWF22_local import UWF22L
+from datasets.UFW22H_local import UWF22HL
 from datasets.LANL_local import LANLL
 
 def parse_args():
@@ -24,7 +24,7 @@ def parse_args():
     parser.add_argument('--model', type=str, choices=['try1', 'try2', 'try2h', 'try3'],
                         help="Model type to use", default="try2")
     parser.add_argument('--dataset', type=str, choices=['UFW22', 'UFW22h', 'LANL'],
-                        help="Dataset to use", default="LANL")
+                        help="Dataset to use", default="UFW22")
     parser.add_argument('--max-epochs', type=int, default=50,
                         help="Maximum number of training epochs")
     
@@ -51,9 +51,9 @@ def main():
     ]
 
     if args.dataset == "UFW22":
-        dataset = UFW22L("/data/datasets/UWF22", transforms=transformations)
+        dataset = UWF22L("/data/datasets/UWF22", transforms=transformations)
     elif args.dataset == "UFW22h":
-        dataset = UFW22HL("/data/datasets/UWF22", transforms=transformations)
+        dataset = UWF22HL("/data/datasets/UWF22", transforms=transformations)
     elif args.dataset == "LANL":
         dataset = LANLL(
             "/data/datasets/LANL",

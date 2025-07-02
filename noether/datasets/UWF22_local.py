@@ -14,13 +14,13 @@ from torch_geometric.data import Data, HeteroData
 from torch_geometric.data.data import BaseData
 from torch_geometric.data.batch import Batch
 import lightning as L
-from noether.transforms.EnrichHost import EnrichHost
+from transforms.EnrichHost import EnrichHost
 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class UFW22L(L.LightningDataModule):
+class UWF22L(L.LightningDataModule):
 
     download_data = [
         {
@@ -245,9 +245,9 @@ class UFW22L(L.LightningDataModule):
 
         # Update keyword map
         for col in self.keyword_map:
-            self.keyword_map[col].update(df[col].dropna().unique()) # type: ignore
-        self.hostmap.update(df["src_ip_zeek"].dropna().unique()) # type: ignore
-        self.hostmap.update(df["dest_ip_zeek"].dropna().unique()) # type: ignore
+            self.keyword_map[col].update(df[col].fillna("None").unique()) # type: ignore
+        self.hostmap.update(df["src_ip_zeek"].fillna("None").unique()) # type: ignore
+        self.hostmap.update(df["dest_ip_zeek"].fillna("None").unique()) # type: ignore
         self.servicemap.update(df[["src_ip_zeek", "src_port_zeek"]]
                                .drop_duplicates()
                                .reset_index(drop=True)
@@ -259,7 +259,7 @@ class UFW22L(L.LightningDataModule):
 
         # Apply the keyword map
         for col in self.keyword_map:
-            df[col] = df[col].map(self.keyword_map[col].index)
+            df[col] = df[col].fillna("None").map(self.keyword_map[col].index)
         df["src_ip_id"] = df["src_ip_zeek"].map(self.hostmap.index)
         df["dest_ip_id"] = df["dest_ip_zeek"].map(self.hostmap.index)
         df["src_service_id"] = df[["src_ip_zeek", "src_port_zeek"]] \
