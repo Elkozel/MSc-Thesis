@@ -199,7 +199,10 @@ class LitFullModel(L.LightningModule):
             if positive_edges.any():
                 class_loss = F.cross_entropy(link_class, edge_labels.long())
                 class_acc = self.link_class_acc(link_class, edge_labels.int())
-                class_auc = self.link_class_auc(link_class, edge_labels.int())
+                # Only update AUC if there are different classes in the labels
+                if edge_labels.unique().size(dim=0) > 1:
+                    class_auc = self.link_class_auc(link_class, edge_labels.int())
+
                 self.mal_count.update(edge_labels.count_nonzero() / edge_labels.size(0))
             else:
                 class_loss = torch.tensor(0.0, device=self.device)
@@ -209,7 +212,10 @@ class LitFullModel(L.LightningModule):
             # Update metrics
             self.model_loss.update(loss)
             pred_acc = self.link_predict_acc(link_pred, labels.int())
-            pred_auc = self.link_predict_auc(link_pred, labels.int())
+
+            # Only update AUC if there are different classes in the labels
+            if labels.unique().size(dim=0) > 1:
+                pred_auc = self.link_predict_auc(link_pred, labels.int())
             
             total_loss += loss
 
@@ -218,9 +224,9 @@ class LitFullModel(L.LightningModule):
         return {
             "avg_loss": avg_loss,
             "avg_pred_acc": self.link_predict_acc.compute(),
-            "avg_pred_auc": self.link_predict_auc.compute(),
+            "avg_pred_auc": self.link_predict_auc.compute() if self.link_predict_auc.update_count > 0 else 0,
             "avg_class_acc": self.link_class_acc.compute(),
-            "avg_class_auc": self.link_class_auc.compute(),
+            "avg_class_auc": self.link_class_auc.compute() if self.link_class_auc.update_count > 0 else 0,
             "avg_mal_count": self.mal_count.compute()
         }
 
