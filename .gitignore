@@ -68,6 +68,7 @@ nodemap.bson
 maps.bson
 *.pkl
 *.parquet
+*.svg
 
 # Comet
 .comet.config
