@@ -279,6 +279,7 @@ class UWF22L(L.LightningDataModule):
         for file in self.download_data:
             filename = os.path.join(self.data_dir, file["raw_file"])
             batch: list[pd.DataFrame] = []
+            batch_mask = self.batch_mask[file["raw_file"]]
 
             for bin in self.generate_bins_from_file(filename):
                 # Collect bins
@@ -288,15 +289,15 @@ class UWF22L(L.LightningDataModule):
 
                 # Create the batch and send it
                 if batch_type is None:
-                    yield batch, int(self.batch_mask[batch_num])
-                elif self.batch_mask[batch_num] == batch_type:
-                    yield batch, int(self.batch_mask[batch_num])
+                    yield batch, int(batch_mask[batch_num])
+                elif batch_mask[batch_num] == batch_type:
+                    yield batch, int(batch_mask[batch_num])
                 batch = []
                 batch_num = batch_num + 1
             
             # Handle leftover bins
             if len(batch) > 0:
-                yield batch, int(self.batch_mask[batch_num])
+                yield batch, int(batch_mask[batch_num])
 
     def df_to_data(self, df: pd.DataFrame):
         hostmap_df = pd.DataFrame([
