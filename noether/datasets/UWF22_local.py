@@ -278,7 +278,7 @@ class UWF22L(L.LightningDataModule):
             # until we "reach" the target bin
             while bin_start - previous_start > self.bin_size:
                 previous_start += self.bin_size
-                yield pd.DataFrame([], columns=columns)
+                yield pd.DataFrame([], columns=df.columns, dtype="int64")
             
             previous_start = bin_start
             yield group
