@@ -62,7 +62,7 @@ class UWF22L(L.LightningDataModule):
                  bin_size: int = 20,
                  batch_size: int = 350,
                  from_time: int = 0,
-                 to_time: int = 70000,
+                 to_time: int = 5552151, # (Relative) timestamp of last event is 5552150.949952126
                  transforms: list = [],
                  dataset_name: str = "UFW22"):
         super().__init__()
@@ -220,7 +220,7 @@ class UWF22L(L.LightningDataModule):
 
         # Maps for each column are also created automatically
         if keyword_map is None:
-            self.keyword_map = {col: OrderedSet([]) for col in columns if col != 'time'}
+            self.keyword_map = {col: OrderedSet([]) for col in columns if col != 'ts'}
             self.keyword_map.pop("src_ip_zeek", None)
             self.keyword_map.pop("dest_ip_zeek", None)
             self.hostmap = OrderedSet([])
@@ -251,11 +251,11 @@ class UWF22L(L.LightningDataModule):
         self.servicemap.update(df[["src_ip_zeek", "src_port_zeek"]]
                                .drop_duplicates()
                                .reset_index(drop=True)
-                               .apply(lambda x: (x[0], x[1]), axis=1)) # type: ignore
+                               .apply(lambda x: (x.iloc[0], x.iloc[1]), axis=1)) # type: ignore
         self.servicemap.update(df[["dest_ip_zeek", "dest_port_zeek"]]
                                .drop_duplicates()
                                .reset_index(drop=True)
-                               .apply(lambda x: (x[0], x[1]), axis=1)) # type: ignore
+                               .apply(lambda x: (x.iloc[0], x.iloc[1]), axis=1)) # type: ignore
 
         # Apply the keyword map
         for col in self.keyword_map:
@@ -263,20 +263,29 @@ class UWF22L(L.LightningDataModule):
         df["src_ip_id"] = df["src_ip_zeek"].map(self.hostmap.index)
         df["dest_ip_id"] = df["dest_ip_zeek"].map(self.hostmap.index)
         df["src_service_id"] = df[["src_ip_zeek", "src_port_zeek"]] \
-                                .apply(lambda x: (x[0], x[1]), axis=1).map(self.servicemap.index)
+                                .apply(lambda x: (x.iloc[0], x.iloc[1]), axis=1).map(self.servicemap.index)
         df["dest_service_id"] = df[["dest_ip_zeek", "dest_port_zeek"]] \
-                                .apply(lambda x: (x[0], x[1]), axis=1).map(self.servicemap.index)
+                                .apply(lambda x: (x.iloc[0], x.iloc[1]), axis=1).map(self.servicemap.index)
 
         # Bin the data
         df['bin'] = (df['ts'] // self.bin_size) * self.bin_size
         grouped = list(df.groupby('bin'))
 
+        previous_start = float(df["bin"].min())
         for bin_start, group in grouped:
+            # Sometimes there are bins without any data, in this case we have to "simulate"
+            # an empty bin, as it will not be in the groupby. Thus, we send empty dataframes
+            # until we "reach" the target bin
+            while bin_start - previous_start > self.bin_size:
+                previous_start += self.bin_size
+                yield pd.DataFrame([], columns=columns)
+            
+            previous_start = bin_start
             yield group
 
     def generate_batches(self, batch_type: int | None = None):
-        batch_num = 0
-        for file in self.download_data:
+        for file in self.download_data:        
+            batch_num = 0
             filename = os.path.join(self.data_dir, file["raw_file"])
             batch: list[pd.DataFrame] = []
             batch_mask = self.batch_mask[file["raw_file"]]
@@ -293,7 +302,7 @@ class UWF22L(L.LightningDataModule):
                 elif batch_mask[batch_num] == batch_type:
                     yield batch, int(batch_mask[batch_num])
                 batch = []
-                batch_num = batch_num + 1
+                batch_num += 1
             
             # Handle leftover bins
             if len(batch) > 0:

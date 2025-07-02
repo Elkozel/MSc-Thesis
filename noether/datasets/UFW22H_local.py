@@ -13,16 +13,22 @@ class UWF22HL(UWF22L):
     """
     A heterogeneous graph representation of the UFW22 dataset.
     """
-    def __init__(self, data_dir, bin_size=20, batch_size=350, dataset_name="UFW22h", transforms=[], rnn_window=30):
-        super().__init__(data_dir, bin_size, batch_size, dataset_name, transforms, rnn_window)
+    def __init__(self, 
+                 data_dir: str, 
+                 bin_size: int = 20, 
+                 batch_size: int = 350, 
+                 from_time: int = 0, 
+                 to_time: int = 5552151, 
+                 transforms: List = [], 
+                 dataset_name: str = "UFW22"):
+        super().__init__(data_dir, bin_size, batch_size, from_time, to_time, transforms, dataset_name)
         self.node_features = 6
         self.edge_features = 12
         self.num_node_types = 2
         self.num_edge_types = 3
         self.edge_type_emb_dim = 1
         self.edge_attr_emb_dim = 1
-        self.num_classes
-
+        self.num_classes = 7
 
     def df_to_data(self, df: pd.DataFrame): # type: ignore
         # Node types are "host" and "service"
