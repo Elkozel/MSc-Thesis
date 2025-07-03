@@ -82,6 +82,8 @@ class UWF22L(L.LightningDataModule):
         self.edge_features = 14
         self.num_classes = 11
 
+        os.makedirs(self.data_dir, exist_ok=True)
+
     
     def download_file(self, url, filepath, tqdm_pos=0):
         # Check if the file is already downloaded
@@ -277,11 +279,11 @@ class UWF22L(L.LightningDataModule):
             # Sometimes there are bins without any data, in this case we have to "simulate"
             # an empty bin, as it will not be in the groupby. Thus, we send empty dataframes
             # until we "reach" the target bin
-            while bin_start - previous_start > self.bin_size:
-                previous_start += self.bin_size
+            while bin_start - previous_start > self.bin_size: # type: ignore
+                previous_start += self.bin_size # type: ignore
                 yield pd.DataFrame([], columns=df.columns, dtype="int64")
             
-            previous_start = float(bin_start)
+            previous_start = bin_start
             yield group
 
     def generate_batches(self, batch_type: int | None = None):
