@@ -1,5 +1,7 @@
-import argparse
 import comet_ml
+
+import os
+import argparse
 from comet_ml.integration.pytorch import log_model
 import torch
 from pytorch_lightning.loggers import CometLogger
@@ -15,7 +17,7 @@ from models.Try2 import LitFullModel as Try2
 from models.Try2H import LitFullModel as Try2H
 from models.Try3 import LitFullModel as Try3
 from datasets.UWF22_local import UWF22L
-from datasets.UFW22H_local import UWF22HL
+from datasets.UWF22H_local import UWF22HL
 from datasets.LANL_local import LANLL
 
 def parse_args():
@@ -27,6 +29,8 @@ def parse_args():
                         help="Dataset to use", default="UFW22")
     parser.add_argument('--max-epochs', type=int, default=50,
                         help="Maximum number of training epochs")
+    parser.add_argument('--dataset-folder', type=str, default="/data/datasets/",
+                        help="Folder to store all datasets")
     
     return parser.parse_args()
 
@@ -51,12 +55,12 @@ def main():
     ]
 
     if args.dataset == "UFW22":
-        dataset = UWF22L("/data/datasets/UWF22", transforms=transformations)
+        dataset = UWF22L(os.path.join(args.dataset_folder,"UWF22"), transforms=transformations)
     elif args.dataset == "UFW22h":
-        dataset = UWF22HL("/data/datasets/UWF22", transforms=transformations)
+        dataset = UWF22HL(os.path.join(args.dataset_folder,"UWF22"), transforms=transformations)
     elif args.dataset == "LANL":
         dataset = LANLL(
-            "/data/datasets/LANL",
+            os.path.join(args.dataset_folder,"LANL"),
             lanl_URL="https://csr.lanl.gov/data-fence/1750885650/Eao2ITLSwQl4pLAxzgE-vjOVk9Q=/cyber1/", 
             transforms=transformations)
     else:
