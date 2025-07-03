@@ -42,7 +42,7 @@ class UWF22HL(UWF22L):
         ])
 
         servicemap_df = pd.DataFrame([
-            EnrichService.enrich_service(service, id) for id, service in enumerate(self.servicemap)
+            EnrichService.enrich_service(port, id) for id, (ip, port) in enumerate(self.servicemap)
         ])
 
         data = HeteroData()
@@ -57,7 +57,7 @@ class UWF22HL(UWF22L):
         ]].to_numpy()).to(torch.float32)
         data['service'].x = torch.from_numpy(servicemap_df[[
             "port",
-            "isknown"
+            "is_known"
             # TODO: Add info about the port
         ]].astype(np.float32).to_numpy()).to(torch.float32)
 
@@ -102,4 +102,4 @@ class UWF22HL(UWF22L):
         data['service', 'belongs_to', 'host'].time = torch.from_numpy(df["ts"].to_numpy(dtype=float)).to(dtype=torch.float64)
         data['service', 'belongs_to', 'host'].y = torch.from_numpy(df["label_tactic"].to_numpy()).to(torch.int64)
         
-        yield data
+        return data

@@ -1,5 +1,6 @@
 from multiprocessing.pool import ThreadPool
 import os
+import inspect
 import math
 import logging
 from typing import Any, Generator, Literal, Optional, Union
@@ -280,7 +281,7 @@ class UWF22L(L.LightningDataModule):
                 previous_start += self.bin_size
                 yield pd.DataFrame([], columns=df.columns, dtype="int64")
             
-            previous_start = bin_start
+            previous_start = float(bin_start)
             yield group
 
     def generate_batches(self, batch_type: int | None = None):
@@ -360,8 +361,8 @@ class UWF22L(L.LightningDataModule):
 
         for batch, _ in self.generate_batches(stage_id):
             batch = [self.df_to_data(bin) for bin in batch]
-            transformed_batch = [self.transform_data(bin) for bin in batch]
-            yield Batch.from_data_list(transformed_batch)
+            batch = [self.transform_data(bin) for bin in batch]
+            yield Batch.from_data_list(batch)
 
     def train_dataloader(self):
         dataset = CustomBatchDataset(self, stage="train")

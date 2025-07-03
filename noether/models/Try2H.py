@@ -240,6 +240,11 @@ class LitFullModel(L.LightningModule):
         
         # Concatenate all edge indices (from different edge types) into a single tensor
         edge_index = torch.cat(list(edge_dict.values()), dim=1)
+
+        # ========================
+        #            Y          
+        # ========================
+        edge_labels = torch.cat([store.y for store in data.edge_stores])
         
         # Return the final processed data: node features, edge indices, node types, edge types, and edge attributes
         return x, edge_index, node_type, edge_type, edge_attr
@@ -255,19 +260,17 @@ class LitFullModel(L.LightningModule):
         for i in range(num_windows):
             to_idx = i + self.rnn_window_size
             x_features = features[i:to_idx]
-            _, edge_index, _, _, _ = self.transform_hetero_data(batch.get_example(to_idx)) # type: ignore
-            
-            assert y_graph.edge_index is not None
-            assert isinstance(y_graph.y, torch.Tensor)
+            y_nodes, y_edge_index, _, _, _ = self.transform_hetero_data(batch.get_example(to_idx)) # type: ignore
+            y_labels = edge_labels = torch.cat([store.y for store in batch.get_example(to_idx).edge_stores])
 
             # Positive and negative edge sampling
-            positive_edges = y_graph.edge_index
+            positive_edges = y_edge_index
             negative_edges = negative_sampling(
-                edge_index=y_graph.edge_index,
-                num_nodes=y_graph.num_nodes,
+                edge_index=y_edge_index,
+                num_nodes=y_nodes.size(dim=0),
                 num_neg_samples=max(positive_edges.size(1), self.negative_edge_sampling_min)
             )
-            edge_labels = y_graph.y
+            edge_labels = y_labels
 
             edge_pairs = torch.cat([positive_edges, negative_edges], dim=1)
             labels = torch.cat([

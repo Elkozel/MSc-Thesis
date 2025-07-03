@@ -47,7 +47,7 @@ def main():
     transformations = [
         RemoveDuplicatedEdges(key=["edge_attr", "edge_weight", "time", "y"]),
         RemoveSelfLoops(attr=["edge_attr", "edge_weight", "time", "y"]),
-        AddInOutDegree()
+        # AddInOutDegree()
     ]
 
     if args.dataset == "UFW22":
