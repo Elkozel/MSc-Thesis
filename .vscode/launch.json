@@ -4,12 +4,19 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
-        
+        {
+            "name": "Run Try3",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/noether/run.py",
+            "console": "integratedTerminal",
+            "args": "--model try3 --dataset UFW22"
+        },
         {
             "name": "Run Try2 Hetero",
             "type": "debugpy",
             "request": "launch",
-            "program": "/data/Try1/noether/run.py",
+            "program": "${workspaceFolder}/noether/run.py",
             "console": "integratedTerminal",
             "args": "--model try2h --dataset UFW22h"
         }
