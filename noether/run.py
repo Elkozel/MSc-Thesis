@@ -24,9 +24,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train and test a GNN model with Comet logging")
     
     parser.add_argument('--model', type=str, choices=['try1', 'try2', 'try2h', 'try3'],
-                        help="Model type to use", default="try2")
+                        help="Model type to use", default="try2h")
     parser.add_argument('--dataset', type=str, choices=['UFW22', 'UFW22h', 'LANL'],
-                        help="Dataset to use", default="UFW22")
+                        help="Dataset to use", default="UFW22h")
     parser.add_argument('--max-epochs', type=int, default=50,
                         help="Maximum number of training epochs")
     parser.add_argument('--dataset-folder', type=str, default="/data/datasets/",
@@ -45,13 +45,11 @@ def main():
         project="Thesis",
         workspace="elkozel"
     )
-    model = "try2"
-    dataset = "LANL"
 
     transformations = [
         RemoveDuplicatedEdges(key=["edge_attr", "edge_weight", "time", "y"]),
         RemoveSelfLoops(attr=["edge_attr", "edge_weight", "time", "y"]),
-        # AddInOutDegree()
+        AddInOutDegree()
     ]
 
     if args.dataset == "UFW22":
@@ -64,7 +62,7 @@ def main():
             lanl_URL="https://csr.lanl.gov/data-fence/1750885650/Eao2ITLSwQl4pLAxzgE-vjOVk9Q=/cyber1/", 
             transforms=transformations)
     else:
-        raise NotImplementedError(f"Dataset {dataset} is not implemented")
+        raise NotImplementedError(f"Dataset {args.dataset} is not implemented")
 
     if args.model == "try1":
         model = Try1(
