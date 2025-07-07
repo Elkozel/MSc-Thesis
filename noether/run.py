@@ -97,7 +97,7 @@ def main():
         edge_dim = dataset.edge_features
         )
     else:
-        raise NotImplementedError(f"Model {model} is not implemented")
+        raise NotImplementedError(f"Model {args.model} is not implemented")
 
     log_model(
         experiment=comet_logger.experiment,
