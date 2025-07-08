@@ -1,0 +1,13 @@
+Bootstrap: docker
+From: nvcr.io/nvidia/pyg:24.07-py3
+
+%files
+    ./noether /usr/src/noether
+    ./requirements.txt /usr/src/noether/requirements.txt
+
+%post
+    apt-get update && apt-get upgrade -y
+    pip install -r /usr/src/noether/requirements.txt
+
+%runscript
+    python3 /usr/src/noether/run.py "$@"

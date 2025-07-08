@@ -79,3 +79,6 @@ lightning_logs/
 
 # Pytorch checkpoints
 *.ckpt
+
+# Apptainer
+*.sif
