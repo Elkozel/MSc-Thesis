@@ -6,7 +6,13 @@ From: nvcr.io/nvidia/pyg:24.07-py3
     ./requirements.txt /usr/src/noether/requirements.txt
 
 %post
+    # Update APT
     apt-get update && apt-get upgrade -y
+
+    # Update pip
+    python -m pip install --upgrade pip
+    
+    # Install project requirements
     pip install -r /usr/src/noether/requirements.txt
 
 %runscript
