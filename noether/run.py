@@ -12,6 +12,7 @@ from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 
 import lightning as L
 
+from models.Try0 import LitFullModel as Try0
 from models.Try1 import LitFullModel as Try1
 from models.Try2 import LitFullModel as Try2
 from models.Try2H import LitFullModel as Try2H
@@ -23,10 +24,10 @@ from datasets.LANL_local import LANLL
 def parse_args():
     parser = argparse.ArgumentParser(description="Train and test a GNN model with Comet logging")
     
-    parser.add_argument('--model', type=str, choices=['try1', 'try2', 'try2h', 'try3'],
+    parser.add_argument('--model', type=str, choices=["try0", 'try1', 'try2', 'try2h', 'try3'],
                         help="Model type to use", default="try2h")
-    parser.add_argument('--dataset', type=str, choices=['UFW22', 'UFW22h', 'LANL'],
-                        help="Dataset to use", default="UFW22h")
+    parser.add_argument('--dataset', type=str, choices=['UWF22', 'UWF22h', 'LANL'],
+                        help="Dataset to use", default="UWF22")
     parser.add_argument('--max-epochs', type=int, default=50,
                         help="Maximum number of training epochs")
     parser.add_argument('--dataset-folder', type=str, default="/data/datasets/",
@@ -52,9 +53,9 @@ def main():
         AddInOutDegree()
     ]
 
-    if args.dataset == "UFW22":
+    if args.dataset == "UWF22":
         dataset = UWF22L(os.path.join(args.dataset_folder,"UWF22"), transforms=transformations)
-    elif args.dataset == "UFW22h":
+    elif args.dataset == "UWF22h":
         dataset = UWF22HL(os.path.join(args.dataset_folder,"UWF22"), transforms=transformations)
     elif args.dataset == "LANL":
         dataset = LANLL(
@@ -64,10 +65,17 @@ def main():
     else:
         raise NotImplementedError(f"Dataset {args.dataset} is not implemented")
 
-    if args.model == "try1":
-        model = Try1(
-        dataset.node_features,
+    if args.model == "try0":
+        model = Try0(
+        dataset.node_features + 2,
         dataset.node_features * 3,
+        out_classes = dataset.num_classes,
+        dropout_rate = 0.0
+        )
+    elif args.model == "try1":
+        model = Try1(
+        dataset.node_features + 2,
+        dataset.node_features + 2 * 3,
         out_classes = dataset.num_classes,
         dropout_rate = 0.0
         )
