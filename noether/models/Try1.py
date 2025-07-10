@@ -4,12 +4,11 @@ import torchmetrics
 import torch.nn as nn
 import lightning as L
 import torch.nn.functional as F
-from typing import Literal, Union
+from typing import List, Literal, Union
 from torch_geometric.nn import GCNConv
 from torch_geometric.utils import negative_sampling
 from torch_geometric.data import Data, Batch
-import torchmetrics.classification
-
+from torch_geometric.data.data import BaseData
 
 class GNNEncoder(nn.Module):
     def __init__(self, in_channels, hidden_channels):
@@ -146,17 +145,20 @@ class LitFullModel(L.LightningModule):
         link_class_logits = self.link_classifier(predicted_embeddings[src], predicted_embeddings[dst]) # shape [num_edges]
 
         return link_pred_scores, link_class_logits
+    
+    def precompute_features(self, graph_list: List[BaseData]) -> torch.Tensor:
+        features = [self.gnn(data.x, data.edge_index, data.edge_attr) for data in graph_list]
+        features = torch.stack(features)
+        return features
 
     def run_trough_batch(self, batch: Batch, num_windows: int, step: Literal['train', 'val', 'test']):
+        graph_list = batch.to_data_list()        
         total_loss = torch.tensor(0.0).to(self.device)
-        total_pred_acc = torch.tensor(0.0).to(self.device)
-        total_class_acc = torch.tensor(0.0).to(self.device)
-        features = [self.gnn(data.x, data.edge_index, data.edge_attr) for data in batch.to_data_list()]
-        features = torch.stack(features)
+        gnn_features = self.precompute_features(graph_list)
             
         for i in range(num_windows):
             to_idx = i + self.rnn_window_size
-            x_features = features[i:to_idx]
+            x_features = gnn_features[i:to_idx]
             y_graph = batch.get_example(to_idx)
             
             assert y_graph.edge_index is not None

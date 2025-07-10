@@ -8,8 +8,9 @@ from typing import List, Literal, Union
 from torch_geometric.nn import GATv2Conv
 from torch_geometric.utils import negative_sampling
 from torch_geometric.data import Data, Batch
-import torchmetrics.classification
 from transformers import T5ForConditionalGeneration, AutoTokenizer
+from torch_geometric.data.data import BaseData
+
 
 
 
@@ -117,8 +118,12 @@ class LitFullModel(L.LightningModule):
         self.link_pred = LinkPredictor(hidden_channels, 1)
         self.link_classifier = LinkTypeClassifier(hidden_channels, out_classes)
 
-        self.link_predict_acc = torchmetrics.classification.BinaryAccuracy(threshold=binary_threshold)
+        self.link_predict_acc = torchmetrics.Accuracy(task="binary", threshold=binary_threshold)
+        self.link_predict_auc = torchmetrics.AUROC(task="binary")
+
         self.link_class_acc = torchmetrics.Accuracy(task="multiclass", num_classes=out_classes)
+        self.link_class_auc = torchmetrics.AUROC(task="multiclass", num_classes=out_classes)
+
         self.mal_count = torchmetrics.MeanMetric()
         self.model_loss = torchmetrics.MeanMetric()
 
@@ -192,10 +197,10 @@ class LitFullModel(L.LightningModule):
         return torch.stack(all_features)
         
     
-    def run_trough_batch(self, batch: Batch, num_windows: int, step: Literal['train', 'validation', 'test']):
-        graph_list: List[Data] = batch.to_data_list()         # type: ignore
+    def run_trough_batch(self, batch: Batch, num_windows: int, step: Literal['train', 'val', 'test']):
+        graph_list = batch.to_data_list()        
         total_loss = torch.tensor(0.0).to(self.device)
-        gnn_features = self.precompute_features(graph_list)
+        gnn_features = self.precompute_features(graph_list) # type: ignore
             
         for i in range(num_windows):
             to_idx = i + self.rnn_window_size
@@ -231,6 +236,10 @@ class LitFullModel(L.LightningModule):
             if positive_edges.any():
                 class_loss = F.cross_entropy(link_class, edge_labels.long())
                 class_acc = self.link_class_acc(link_class, edge_labels.int())
+                # Only update AUC if there are different classes in the labels
+                if edge_labels.unique().size(dim=0) > 1:
+                    class_auc = self.link_class_auc(link_class, edge_labels.int())
+
                 self.mal_count.update(edge_labels.count_nonzero() / edge_labels.size(0))
             else:
                 class_loss = torch.tensor(0.0, device=self.device)
@@ -240,73 +249,77 @@ class LitFullModel(L.LightningModule):
             # Update metrics
             self.model_loss.update(loss)
             pred_acc = self.link_predict_acc(link_pred, labels.int())
+
+            # Only update AUC if there are different classes in the labels
+            if labels.unique().size(dim=0) > 1:
+                pred_auc = self.link_predict_auc(link_pred, labels.int())
             
             total_loss += loss
 
         avg_loss = total_loss / num_windows
 
         return {
-            "avg_loss": avg_loss,
-            "avg_pred_acc": self.link_predict_acc.compute(),
-            "avg_class_acc": self.link_class_acc.compute(),
-            "avg_mal_count": self.mal_count.compute()
+            "loss": avg_loss,
+            "pred_acc": self.link_predict_acc.compute(),
+            "pred_auc": self.link_predict_auc.compute() if self.link_predict_auc.update_count > 0 else 0,
+            "class_acc": self.link_class_acc.compute(),
+            "class_auc": self.link_class_auc.compute() if self.link_class_auc.update_count > 0 else 0,
+            "mal_count": self.mal_count.compute()
         }
 
     def training_step(self, batch: Batch, batch_idx):
         """Trains the model on one batch of temporal graphs."""
         num_windows = batch.num_graphs - (self.rnn_window_size + 1)
+        step = "train"
         
         if num_windows < 1:
             warnings.warn(f"Training batch ID: {batch_idx} (size {batch.num_graphs}) is not enough \
                           for a full window of {self.rnn_window_size}")
             return torch.tensor(0.0, requires_grad=True).to(self.device)
             
-        results = self.run_trough_batch(batch, num_windows, "train")
+        results = self.run_trough_batch(batch, num_windows, step)
         
         # Logging
-        self.log("train_loss", results["avg_loss"], batch_size=batch.num_graphs, on_epoch=True)
-        self.log("train_pred_acc", results["avg_pred_acc"], batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
-        self.log("train_class_acc", results["avg_class_acc"], batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
-        self.log("train_mal_count", results["avg_mal_count"], batch_size=batch.num_graphs)
+        for metric, value in results.items():
+            self.log(f"{step}_{metric}", value, batch_size=batch.num_graphs, on_epoch=True)
 
-        return results["avg_loss"]
+        return results["loss"]
     
     def validation_step(self, batch: Batch, batch_idx):
         """Validates the model on one batch of temporal graphs."""
         num_windows = batch.num_graphs - (self.rnn_window_size + 1)
+        step = "val"
         
         if num_windows < 1:
             warnings.warn(f"Validation batch ID: {batch_idx} (size {batch.num_graphs}) is not enough \
                           for a full window of {self.rnn_window_size}")
             return torch.tensor(0.0, requires_grad=True).to(self.device)
             
-        results = self.run_trough_batch(batch, num_windows, "validation")
+        results = self.run_trough_batch(batch, num_windows, step)
         
         # Logging
-        self.log("val_loss", results["avg_loss"], batch_size=batch.num_graphs, on_epoch=True)
-        self.log("val_pred_acc", results["avg_pred_acc"], batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
-        self.log("val_class_acc", results["avg_class_acc"], batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
-        self.log("val_mal_count", results["avg_mal_count"], batch_size=batch.num_graphs)
+        for metric, value in results.items():
+            self.log(f"{step}_{metric}", value, batch_size=batch.num_graphs, on_epoch=True)
 
-        return results["avg_loss"]
+        return results["loss"]
     
     def test_step(self, batch: Batch, batch_idx):
         """Validates the model on one batch of temporal graphs."""
         num_windows = batch.num_graphs - (self.rnn_window_size + 1)
+        step = "test"
         
         if num_windows < 1:
             warnings.warn(f"Testing batch ID: {batch_idx} (size {batch.num_graphs}) is not enough \
                           for a full window of {self.rnn_window_size}")
             return torch.tensor(0.0, requires_grad=True).to(self.device)
             
-        results = self.run_trough_batch(batch, num_windows, "test")
+        results = self.run_trough_batch(batch, num_windows, step)
         
         # Logging
-        self.log("test_loss", results["avg_loss"], batch_size=batch.num_graphs, on_epoch=True)
-        self.log("test_pred_acc", results["avg_pred_acc"], batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
-        self.log("test_class_acc", results["avg_class_acc"], batch_size=batch.num_graphs, prog_bar=True, on_epoch=True)
+        for metric, value in results.items():
+            self.log(f"{step}_{metric}", value, batch_size=batch.num_graphs, on_epoch=True)
 
-        return results["avg_loss"]
+        return results["loss"]
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=1e-3)

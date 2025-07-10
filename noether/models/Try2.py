@@ -158,7 +158,6 @@ class LitFullModel(L.LightningModule):
         features = [self.gnn(data.x, data.edge_index, data.edge_attr) for data in graph_list]
         features = torch.stack(features)
         return features
-        
     
     def run_trough_batch(self, batch: Batch, num_windows: int, step: Literal['train', 'val', 'test']):
         graph_list = batch.to_data_list()        
