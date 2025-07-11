@@ -78,8 +78,6 @@ class UWF24L(L.LightningDataModule):
         self.edge_features = 14
         self.num_classes = 11
 
-        os.makedirs(self.data_dir, exist_ok=True)
-
     
     def download_file(self, url, filepath, tqdm_pos=0):
         # Check if the file is already downloaded
@@ -130,6 +128,9 @@ class UWF24L(L.LightningDataModule):
             pool.map(lambda x: self.download_file(*x), args)
 
     def prepare_data(self):
+        # Make sure the data dir is there
+        os.makedirs(self.data_dir, exist_ok=True)
+        # Download files if nesessary
         self.download_all_files()
 
     def generate_split_file(self, filename: str):

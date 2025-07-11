@@ -82,8 +82,6 @@ class UWF22L(L.LightningDataModule):
         self.edge_features = 14
         self.num_classes = 11
 
-        os.makedirs(self.data_dir, exist_ok=True)
-
     
     def download_file(self, url, filepath, tqdm_pos=0):
         # Check if the file is already downloaded
@@ -117,10 +115,6 @@ class UWF22L(L.LightningDataModule):
             raise RuntimeError("Could not download file")
 
     def download_all_files(self):
-        # Check if all files listed in self.download_data already exist in data_dir
-        if all([os.path.exists(os.path.join(self.data_dir, link["raw_file"])) for link in self.download_data]):
-            return  # If so, skip downloading
-
         # Create a thread pool with 8 worker threads
         with ThreadPool(8) as pool:
             # Prepare arguments: (url, destination path, tqdm bar position) for each file
@@ -134,6 +128,9 @@ class UWF22L(L.LightningDataModule):
             pool.map(lambda x: self.download_file(*x), args)
 
     def prepare_data(self):
+        # Make sure the data dir is there
+        os.makedirs(self.data_dir, exist_ok=True)
+        # Download files if nesessary
         self.download_all_files()
 
     def generate_split_file(self, filename: str):
