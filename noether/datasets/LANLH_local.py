@@ -8,7 +8,7 @@ from torch_geometric.data import HeteroData
 
 class LANLH(LANLL):
     """
-    A heterogeneous graph representation of the UFW22 dataset.
+    A heterogeneous graph representation of the UWF22 dataset.
     """
     def __init__(self, 
                  data_dir, 

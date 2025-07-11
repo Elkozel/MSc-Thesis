@@ -85,9 +85,9 @@ class UWF22FallL(L.LightningDataModule):
                  from_time: int = 0,
                  to_time: int = 5552151, # (Relative) timestamp of last event is 5552150.949952126
                  transforms: list = [],
-                 dataset_name: str = "UFW22Fall"):
+                 dataset_name: str = "UWFFall"):
         super().__init__()
-        self.data_dir = data_dir
+        self.data_dir = os.path.join(data_dir, dataset_name)
         self.from_time = from_time
         self.to_time = to_time
         self.bin_size = bin_size

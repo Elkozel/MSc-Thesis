@@ -32,7 +32,7 @@ class LANLL(L.LightningDataModule):
                  transforms: list = [],
                  dataset_name: str = "LANL"):
         super().__init__()
-        self.data_dir = data_dir
+        self.data_dir = os.path.join(data_dir, dataset_name)
         self.bin_size = bin_size
         self.from_time = from_time
         self.to_time = to_time

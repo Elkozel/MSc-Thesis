@@ -11,7 +11,7 @@ from transforms.EnrichHost import EnrichHost
 
 class UWF22HL(UWF22L):
     """
-    A heterogeneous graph representation of the UFW22 dataset.
+    A heterogeneous graph representation of the UWF22 dataset.
     """
     def __init__(self, 
                  data_dir: str, 
@@ -20,7 +20,7 @@ class UWF22HL(UWF22L):
                  from_time: int = 0, 
                  to_time: int = 5552151, 
                  transforms: List = [], 
-                 dataset_name: str = "UFW22H"):
+                 dataset_name: str = "UWF22H"):
         super().__init__(data_dir, bin_size, batch_size, from_time, to_time, transforms, dataset_name)
         self.node_features = 6
         self.edge_features = 12

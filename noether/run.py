@@ -19,6 +19,9 @@ from models.Try2H import LitFullModel as Try2H
 from models.Try3 import LitFullModel as Try3
 from datasets.UWF22_local import UWF22L
 from datasets.UWF22H_local import UWF22HL
+from datasets.UWF22Fall_local import UWF22FallL
+from datasets.UWF24_local import UWF24L
+from datasets.UWF24Fall_local import UWF24FallL
 from datasets.LANL_local import LANLL
 
 def parse_args():
@@ -54,12 +57,18 @@ def main():
     ]
 
     if args.dataset == "UWF22":
-        dataset = UWF22L(os.path.join(args.dataset_folder,"UWF22"), transforms=transformations)
+        dataset = UWF22L(args.dataset_folder, transforms=transformations)
     elif args.dataset == "UWF22h":
-        dataset = UWF22HL(os.path.join(args.dataset_folder,"UWF22"), transforms=transformations)
+        dataset = UWF22HL(args.dataset_folder, transforms=transformations)
+    elif args.dataset == "UWF22Fall":
+        dataset = UWF22FallL(args.dataset_folder, transforms=transformations)
+    elif args.dataset == "UWF24":
+        dataset = UWF24L(args.dataset_folder, transforms=transformations)
+    elif args.dataset == "UWF24Fall":
+        dataset = UWF24FallL(args.dataset_folder, transforms=transformations)
     elif args.dataset == "LANL":
         dataset = LANLL(
-            os.path.join(args.dataset_folder,"LANL"),
+            args.dataset_folder,
             lanl_URL="https://csr.lanl.gov/data-fence/1750885650/Eao2ITLSwQl4pLAxzgE-vjOVk9Q=/cyber1/", 
             transforms=transformations)
     else:
