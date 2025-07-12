@@ -28,7 +28,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train and test a GNN model with Comet logging")
     
     parser.add_argument('--model', type=str, choices=["try0", 'try1', 'try2', 'try2h', 'try3'],
-                        help="Model type to use", default="try2h")
+                        help="Model type to use", default="try2")
     parser.add_argument('--dataset', type=str, choices=["UWF22", "UWF22h", "UWF22Fall", "UWF24", "UWF24Fall", 'LANL'],
                         help="Dataset to use", default="UWF22")
     parser.add_argument('--max-epochs', type=int, default=50,
@@ -39,7 +39,11 @@ def parse_args():
     return parser.parse_args()
 
 def check_hetero(model_name: str, dataset_name: str):
-    return model_name.endswith("h") ^ dataset_name.endswith("h")
+    if model_name.endswith("h") ^ dataset_name.endswith("h"):
+        return
+
+    raise Exception(f"Model {model_name} cannot be run with dataset {dataset_name} \
+                    (one of them is for heterogeneous graphs)")
 
 def main():
     args = parse_args()
@@ -49,6 +53,7 @@ def main():
         project="Thesis",
         workspace="elkozel"
     )
+    check_hetero(args.model, args.dataset)
 
     transformations = [
         RemoveDuplicatedEdges(key=["edge_attr", "edge_weight", "time", "y"]),
