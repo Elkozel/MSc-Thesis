@@ -20,8 +20,9 @@ class UWF22HL(UWF22L):
                  from_time: int = 0, 
                  to_time: int = 5552151, 
                  transforms: List = [], 
+                 batch_split: list = [0.6, 0.25, 0.15],
                  dataset_name: str = "UWF22H"):
-        super().__init__(data_dir, bin_size, batch_size, from_time, to_time, transforms, dataset_name)
+        super().__init__(data_dir, bin_size, batch_size, from_time, to_time, transforms, batch_split, dataset_name)
         self.node_features = 6
         self.edge_features = 12
         self.num_node_types = 2

@@ -7,7 +7,7 @@ from typing import Any, Generator, Literal, Optional, Union
 import requests
 import torch
 import numpy as np
-from tqdm import tqdm
+from tqdm.auto import tqdm
 import pandas as pd
 from ordered_set import OrderedSet
 from torch.utils.data import random_split, TensorDataset
@@ -65,6 +65,7 @@ class UWF22L(L.LightningDataModule):
                  from_time: int = 0,
                  to_time: int = 5552151, # (Relative) timestamp of last event is 5552150.949952126
                  transforms: list = [],
+                 batch_split: list = [0.6, 0.25, 0.15],
                  dataset_name: str = "UWF22"):
         super().__init__()
         self.data_dir = os.path.join(data_dir, dataset_name)
@@ -75,6 +76,7 @@ class UWF22L(L.LightningDataModule):
         self.dataset_name = dataset_name
         self.transforms = transforms
         self.batch_mask = {}
+        self.batch_split = batch_split
         self.ts_first_event = 1639746045.213779 # This allows us to easily make time relative
 
         self.save_hyperparameters()
@@ -160,7 +162,7 @@ class UWF22L(L.LightningDataModule):
         full_idx = torch.arange(num_batches)
         idx = TensorDataset(full_idx)
 
-        _, val, test = random_split(idx, [0.6, 0.25, 0.15], generator=generator)
+        _, val, test = random_split(idx, self.batch_split, generator=generator)
 
         # Create mask: 0 = train, 1 = val, 2 = test
         self.batch_mask[filename] = torch.zeros(num_batches, dtype=torch.uint8)
