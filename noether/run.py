@@ -40,9 +40,7 @@ def parse_args():
 
 def check_hetero(model_name: str, dataset_name: str):
     if model_name.endswith("h") ^ dataset_name.endswith("h"):
-        return
-
-    raise Exception(f"Model {model_name} cannot be run with dataset {dataset_name} \
+        raise Exception(f"Model {model_name} cannot be run with dataset {dataset_name} \
                     (one of them is for heterogeneous graphs)")
 
 def main():
