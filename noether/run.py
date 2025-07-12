@@ -33,6 +33,10 @@ def parse_args():
                         help="Dataset to use", default="UWF22")
     parser.add_argument('--max-epochs', type=int, default=50,
                         help="Maximum number of training epochs")
+    parser.add_argument('--bin-size', type=int, default=20,
+                        help="The size of the time bins")
+    parser.add_argument('--batch-size', type=int, default=350,
+                        help="The amount of bins to be grouped in a batch")
     parser.add_argument('--dataset-folder', type=str, default="/data/datasets",
                         help="Folder to store all datasets")
     
@@ -60,18 +64,35 @@ def main():
     ]
 
     if args.dataset == "UWF22":
-        dataset = UWF22L(args.dataset_folder, transforms=transformations)
+        dataset = UWF22L(args.dataset_folder, 
+                         bin_size=args.bin_size,
+                         batch_size=args.batch_size,
+                         transforms=transformations)
     elif args.dataset == "UWF22h":
-        dataset = UWF22HL(args.dataset_folder, transforms=transformations)
+        dataset = UWF22HL(args.dataset_folder, 
+                         bin_size=args.bin_size,
+                         batch_size=args.batch_size,
+                         transforms=transformations)
     elif args.dataset == "UWF22Fall":
-        dataset = UWF22FallL(args.dataset_folder, transforms=transformations)
+        dataset = UWF22FallL(args.dataset_folder, 
+                         bin_size=args.bin_size,
+                         batch_size=args.batch_size,
+                         transforms=transformations)
     elif args.dataset == "UWF24":
-        dataset = UWF24L(args.dataset_folder, transforms=transformations)
+        dataset = UWF24L(args.dataset_folder, 
+                         bin_size=args.bin_size,
+                         batch_size=args.batch_size,
+                         transforms=transformations)
     elif args.dataset == "UWF24Fall":
-        dataset = UWF24FallL(args.dataset_folder, transforms=transformations)
+        dataset = UWF24FallL(args.dataset_folder, 
+                         bin_size=args.bin_size,
+                         batch_size=args.batch_size,
+                         transforms=transformations)
     elif args.dataset == "LANL":
         dataset = LANLL(
             args.dataset_folder,
+            bin_size=args.bin_size,
+            batch_size=args.batch_size,
             lanl_URL="https://csr.lanl.gov/data-fence/1750885650/Eao2ITLSwQl4pLAxzgE-vjOVk9Q=/cyber1/", 
             transforms=transformations)
     else:
