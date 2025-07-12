@@ -29,11 +29,11 @@ def parse_args():
     
     parser.add_argument('--model', type=str, choices=["try0", 'try1', 'try2', 'try2h', 'try3'],
                         help="Model type to use", default="try2h")
-    parser.add_argument('--dataset', type=str, choices=['UWF22', 'UWF22h', 'LANL'],
+    parser.add_argument('--dataset', type=str, choices=["UWF22", "UWF22h", "UWF22Fall", "UWF24", "UWF24Fall", 'LANL'],
                         help="Dataset to use", default="UWF22")
     parser.add_argument('--max-epochs', type=int, default=50,
                         help="Maximum number of training epochs")
-    parser.add_argument('--dataset-folder', type=str, default="/data/datasets/",
+    parser.add_argument('--dataset-folder', type=str, default="/data/datasets",
                         help="Folder to store all datasets")
     
     return parser.parse_args()
