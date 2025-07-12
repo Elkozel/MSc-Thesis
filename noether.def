@@ -17,3 +17,5 @@ From: nvcr.io/nvidia/pyg:24.07-py3
 
 %runscript
     python3 /usr/src/noether/run.py "$@"
+
+# apptainer run --bind /tudelft.net/staff-umbrella/noether/:/data/ noether.sif
