@@ -149,6 +149,7 @@ def main():
     # If we train on tensor cores as well
     torch.set_float32_matmul_precision('high')
 
+    model = torch.compile(model)
     trainer = L.Trainer(max_epochs = args.max_epochs,
                         logger=comet_logger,  # type: ignore
                         callbacks=[EarlyStopping(monitor="val_loss", mode="min", check_on_train_epoch_end=False)]) # type: ignore
