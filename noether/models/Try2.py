@@ -127,6 +127,49 @@ class LitFullModel(L.LightningModule):
 
         self.save_hyperparameters()
 
+    def forward2(
+        self,
+        graph_sequence_batch: torch.Tensor,             # shape: [B, T, N, F]
+        edge_pairs_batch: list[torch.Tensor]            # each: shape [2, E_i], one per batch element
+    ):
+        B, T, N, F = graph_sequence_batch.shape
+
+        # Step 1: Reshape for RNN: [B * N, T, F]
+        graph_features = graph_sequence_batch.permute(0, 2, 1, 3)  # [B, N, T, F]
+        rnn_input = graph_features.reshape(B * N, T, F)
+
+        # Step 2: Pass through RNN
+        rnn_output, _ = self.rnn(rnn_input)  # [B * N, T, hidden_dim]
+        rnn_output = rnn_output[:, -1, :]    # take output at last time step: [B * N, hidden_dim]
+
+        # Step 3: Reshape back to [B, N, hidden_dim]
+        hidden_dim = rnn_output.size(-1)
+        node_embeddings = rnn_output.view(B, N, hidden_dim)  # [B, N, hidden]
+
+        # Step 4: Compute edge predictions
+        all_link_scores = []
+        all_class_logits = []
+
+        for b in range(B):
+            edge_index = edge_pairs_batch[b]  # shape: [2, E]
+            src = edge_index[0]  # shape: [E]
+            dst = edge_index[1]
+
+            h_src = node_embeddings[b, src]  # shape: [E, hidden]
+            h_dst = node_embeddings[b, dst]
+
+            link_score = self.link_pred(h_src, h_dst)         # shape: [E]
+            link_logits = self.link_classifier(h_src, h_dst)  # shape: [E, C]
+
+            all_link_scores.append(link_score)
+            all_class_logits.append(link_logits)
+
+        # Step 5: Concatenate results across batch
+        link_pred_scores = torch.cat(all_link_scores, dim=0)     # shape: [sum_E]
+        link_class_logits = torch.cat(all_class_logits, dim=0)   # shape: [sum_E, C]
+
+        return link_pred_scores, link_class_logits
+
 
     def forward(self, graph_sequence: Union[list[Data], torch.Tensor], edge_pairs):
         # Generate the features at each timestamp if not already computed
@@ -154,17 +197,16 @@ class LitFullModel(L.LightningModule):
 
         return link_pred_scores, link_class_logits
     
-    def precompute_features(self, graph_list: List[BaseData]) -> torch.Tensor:
-        features = [self.gnn(data.x, data.edge_index, data.edge_attr) for data in graph_list]
-        features = torch.stack(features)
-        return features
+    def precompute_features(self, batch: Batch) -> Batch:
+        features = self.gnn(batch.x, batch.edge_index, batch.edge_attr) # type: ignore
+        batch.x = features # type: ignore
+        return batch
     
-    def run_trough_batch(self, batch: Batch, num_windows: int, step: Literal['train', 'val', 'test']):
-        graph_list = batch.to_data_list()        
-        total_loss = torch.tensor(0.0).to(self.device)
-        gnn_features = self.precompute_features(graph_list)
-            
-        for i in range(num_windows):
+    def edges_and_labels(self, graph_list: List[Data], num_windows):
+        all_pairs = []
+        all_labels = []
+
+        for window_num in range(num_windows):
             to_idx = i + self.rnn_window_size
             x_features = gnn_features[i:to_idx]
             y_graph = batch.get_example(to_idx)
@@ -215,13 +257,9 @@ class LitFullModel(L.LightningModule):
             # Only update AUC if there are different classes in the labels
             if labels.unique().size(dim=0) > 1:
                 pred_auc = self.link_predict_auc(link_pred, labels.int())
-            
-            total_loss += loss
-
-        avg_loss = total_loss / num_windows
 
         return {
-            "loss": avg_loss,
+            "loss": self.model_loss.compute(),
             "pred_acc": self.link_predict_acc.compute(),
             "pred_auc": self.link_predict_auc.compute() if self.link_predict_auc.update_count > 0 else 0,
             "class_acc": self.link_class_acc.compute(),
@@ -286,3 +324,99 @@ class LitFullModel(L.LightningModule):
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=1e-3)
         return optimizer
+    
+    def run_trough_batch2(self, batch: Batch, num_windows: int, step: Literal['train', 'val', 'test']):
+        # 1. Precompute GNN features (modifies .x)
+        batch = self.precompute_features(batch)
+        graph_list = batch.to_data_list()
+
+        # 2. Organize input windows for the RNN
+        rnn_input_sequences = []   # List[List[Data]]
+        edge_pairs_batch = []      # List[edge_index tensors]
+        label_batch = []           # List[label tensors]
+
+        for window_num in range(num_windows):
+            input_start = window_num
+            input_end = window_num + self.rnn_window_size
+            target_idx = input_end  # predict on this graph
+
+            x_sequence = graph_list[input_start:input_end]
+            y_graph = graph_list[target_idx]
+
+            # Get edges and labels for this target graph
+            pos_edges = y_graph.edge_index
+            num_neg = max(pos_edges.size(1), self.negative_edge_sampling_min)
+
+            neg_edges = negative_sampling(
+                edge_index=pos_edges,
+                num_nodes=y_graph.num_nodes,
+                num_neg_samples=num_neg
+            )
+
+            edge_pairs = torch.cat([pos_edges, neg_edges], dim=1)
+            edge_labels = torch.cat([
+                torch.ones(pos_edges.size(1)),
+                torch.zeros(neg_edges.size(1))
+            ]).to(self.device)
+
+            rnn_input_sequences.append(x_sequence)
+            edge_pairs_batch.append(edge_pairs.to(self.device))
+            label_batch.append(edge_labels)
+
+        # 3. Convert list of sequences → [B, T, N, F] tensor
+        B = len(rnn_input_sequences)
+        T = self.rnn_window_size
+        N = graph_list[0].num_nodes
+        F = graph_list[0].x.size(1)
+
+        graph_tensor = torch.zeros(B, T, N, F, device=self.device)
+
+        for b, seq in enumerate(rnn_input_sequences):
+            for t, graph in enumerate(seq):
+                graph_tensor[b, t] = graph.x  # assumes consistent node ordering
+
+        # 4. Run model forward
+        link_pred, link_class = self.forward2(graph_tensor, edge_pairs_batch)
+
+        # 5. Compute losses
+        all_labels = torch.cat(label_batch)  # shape: [total_edges]
+        pred_loss = F.binary_cross_entropy_with_logits(link_pred, all_labels.float())
+
+        # Classification: Only compute for positive edges
+        positive_mask = all_labels.bool()
+        link_class_pos = link_class[positive_mask]
+
+        edge_type_labels = torch.cat([
+            graph_list[i + self.rnn_window_size].y.to(self.device)
+            for i in range(num_windows)
+        ])
+
+        if positive_mask.any():
+            class_loss = F.cross_entropy(link_class_pos, edge_type_labels.long())
+            class_acc = self.link_class_acc(link_class_pos, edge_type_labels.int())
+
+            if edge_type_labels.unique().numel() > 1:
+                class_auc = self.link_class_auc(link_class_pos, edge_type_labels.int())
+
+            self.mal_count.update(edge_type_labels.count_nonzero() / edge_type_labels.size(0))
+        else:
+            class_loss = torch.tensor(0.0, device=self.device)
+
+        # Combine losses
+        loss = pred_loss + self.pred_alpha * class_loss
+        self.model_loss.update(loss)
+
+        # Metrics
+        pred_acc = self.link_predict_acc(link_pred, all_labels.int())
+        if all_labels.unique().numel() > 1:
+            pred_auc = self.link_predict_auc(link_pred, all_labels.int())
+
+        # 6. Return metrics
+        return {
+            "loss": self.model_loss.compute(),
+            "pred_acc": self.link_predict_acc.compute(),
+            "pred_auc": self.link_predict_auc.compute() if self.link_predict_auc.update_count > 0 else 0,
+            "class_acc": self.link_class_acc.compute(),
+            "class_auc": self.link_class_auc.compute() if self.link_class_auc.update_count > 0 else 0,
+            "mal_count": self.mal_count.compute()
+        }
