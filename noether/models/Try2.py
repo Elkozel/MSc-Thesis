@@ -196,17 +196,17 @@ class LitFullModel(L.LightningModule):
         link_class_logits = self.link_classifier(predicted_embeddings[src], predicted_embeddings[dst]) # shape [num_edges]
 
         return link_pred_scores, link_class_logits
+    def precompute_features(self, graph_list: List[BaseData]) -> torch.Tensor:
+        features = [self.gnn(data.x, data.edge_index, data.edge_attr) for data in graph_list]
+        features = torch.stack(features)
+        return features
     
-    def precompute_features(self, batch: Batch) -> Batch:
-        features = self.gnn(batch.x, batch.edge_index, batch.edge_attr) # type: ignore
-        batch.x = features # type: ignore
-        return batch
-    
-    def edges_and_labels(self, graph_list: List[Data], num_windows):
-        all_pairs = []
-        all_labels = []
-
-        for window_num in range(num_windows):
+    def run_trough_batch(self, batch: Batch, num_windows: int, step: Literal['train', 'val', 'test']):
+        graph_list = batch.to_data_list()        
+        total_loss = torch.tensor(0.0).to(self.device)
+        gnn_features = self.precompute_features(graph_list)
+            
+        for i in range(num_windows):
             to_idx = i + self.rnn_window_size
             x_features = gnn_features[i:to_idx]
             y_graph = batch.get_example(to_idx)
@@ -257,9 +257,13 @@ class LitFullModel(L.LightningModule):
             # Only update AUC if there are different classes in the labels
             if labels.unique().size(dim=0) > 1:
                 pred_auc = self.link_predict_auc(link_pred, labels.int())
+            
+            total_loss += loss
+
+        avg_loss = total_loss / num_windows
 
         return {
-            "loss": self.model_loss.compute(),
+            "loss": avg_loss,
             "pred_acc": self.link_predict_acc.compute(),
             "pred_auc": self.link_predict_auc.compute() if self.link_predict_auc.update_count > 0 else 0,
             "class_acc": self.link_class_acc.compute(),
@@ -325,9 +329,14 @@ class LitFullModel(L.LightningModule):
         optimizer = torch.optim.AdamW(self.parameters(), lr=1e-3)
         return optimizer
     
+    def precompute_features2(self, batch: Batch) -> Batch:
+        features = self.gnn(batch.x, batch.edge_index, batch.edge_attr) # type: ignore
+        batch.x = features # type: ignore
+        return batch
+    
     def run_trough_batch2(self, batch: Batch, num_windows: int, step: Literal['train', 'val', 'test']):
         # 1. Precompute GNN features (modifies .x)
-        batch = self.precompute_features(batch)
+        batch = self.precompute_features2(batch)
         graph_list = batch.to_data_list()
 
         # 2. Organize input windows for the RNN
@@ -367,9 +376,9 @@ class LitFullModel(L.LightningModule):
         B = len(rnn_input_sequences)
         T = self.rnn_window_size
         N = graph_list[0].num_nodes
-        F = graph_list[0].x.size(1)
+        Fs = graph_list[0].x.size(1)
 
-        graph_tensor = torch.zeros(B, T, N, F, device=self.device)
+        graph_tensor = torch.zeros(B, T, N, Fs, device=self.device)
 
         for b, seq in enumerate(rnn_input_sequences):
             for t, graph in enumerate(seq):
