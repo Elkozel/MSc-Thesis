@@ -28,11 +28,13 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train and test a GNN model with Comet logging")
     
     parser.add_argument('--model', type=str, choices=["try0", 'try1', 'try2', 'try2h', 'try3'],
-                        help="Model type to use", default="try2")
+                        help="Model type to use", default="try1")
     parser.add_argument('--dataset', type=str, choices=["UWF22", "UWF22h", "UWF22Fall", "UWF24", "UWF24Fall", 'LANL'],
                         help="Dataset to use", default="UWF22")
     parser.add_argument('--max-epochs', type=int, default=50,
                         help="Maximum number of training epochs")
+    parser.add_argument('--num-devices', default="auto",
+                        help="The amount of devices used by the Trainer")
     parser.add_argument('--bin-size', type=int, default=20,
                         help="The size of the time bins")
     parser.add_argument('--batch-size', type=int, default=350,
@@ -150,6 +152,7 @@ def main():
     torch.set_float32_matmul_precision('high')
 
     trainer = L.Trainer(max_epochs = args.max_epochs,
+                        devices=args.num_devices,
                         logger=comet_logger,  # type: ignore
                         callbacks=[EarlyStopping(monitor="val_loss", mode="min", check_on_train_epoch_end=False)]) # type: ignore
     trainer.fit(model, dataset)
