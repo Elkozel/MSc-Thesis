@@ -127,50 +127,6 @@ class LitFullModel(L.LightningModule):
 
         self.save_hyperparameters()
 
-    def forward2(
-        self,
-        graph_sequence_batch: torch.Tensor,             # shape: [B, T, N, F]
-        edge_pairs_batch: list[torch.Tensor]            # each: shape [2, E_i], one per batch element
-    ):
-        B, T, N, F = graph_sequence_batch.shape
-
-        # Step 1: Reshape for RNN: [B * N, T, F]
-        graph_features = graph_sequence_batch.permute(0, 2, 1, 3)  # [B, N, T, F]
-        rnn_input = graph_features.reshape(B * N, T, F)
-
-        # Step 2: Pass through RNN
-        rnn_output, _ = self.rnn(rnn_input)  # [B * N, T, hidden_dim]
-        rnn_output = rnn_output[:, -1, :]    # take output at last time step: [B * N, hidden_dim]
-
-        # Step 3: Reshape back to [B, N, hidden_dim]
-        hidden_dim = rnn_output.size(-1)
-        node_embeddings = rnn_output.view(B, N, hidden_dim)  # [B, N, hidden]
-
-        # Step 4: Compute edge predictions
-        all_link_scores = []
-        all_class_logits = []
-
-        for b in range(B):
-            edge_index = edge_pairs_batch[b]  # shape: [2, E]
-            src = edge_index[0]  # shape: [E]
-            dst = edge_index[1]
-
-            h_src = node_embeddings[b, src]  # shape: [E, hidden]
-            h_dst = node_embeddings[b, dst]
-
-            link_score = self.link_pred(h_src, h_dst)         # shape: [E]
-            link_logits = self.link_classifier(h_src, h_dst)  # shape: [E, C]
-
-            all_link_scores.append(link_score)
-            all_class_logits.append(link_logits)
-
-        # Step 5: Concatenate results across batch
-        link_pred_scores = torch.cat(all_link_scores, dim=0)     # shape: [sum_E]
-        link_class_logits = torch.cat(all_class_logits, dim=0)   # shape: [sum_E, C]
-
-        return link_pred_scores, link_class_logits
-
-
     def forward(self, graph_sequence: Union[list[Data], torch.Tensor], edge_pairs):
         # Generate the features at each timestamp if not already computed
         # shape (timestamp, nodes, features)
@@ -197,106 +153,117 @@ class LitFullModel(L.LightningModule):
 
         return link_pred_scores, link_class_logits
 
-    def precompute_features(self, batch: Batch) -> Batch:
-        features = self.gnn(batch.x, batch.edge_index, batch.edge_attr) # type: ignore
-        batch.x = features # type: ignore
-        return batch
-    
-    def run_trough_batch(self, batch: Batch, num_windows: int, step: Literal['train', 'val', 'test']):
-        # 1. Precompute GNN features (modifies .x)
-        batch = self.precompute_features(batch)
-        graph_list = batch.to_data_list()
+    def precompute_features(self, batch: Batch) -> torch.Tensor:
+        # Run GNN in a batched fashion
+        x_out = self.gnn(batch.x, batch.edge_index, batch.edge_attr, batch=batch.batch)  # [T*N, F]
 
-        # 2. Organize input windows for the RNN
-        rnn_input_sequences = []   # List[List[Data]]
-        edge_pairs_batch = []      # List[edge_index tensors]
-        label_batch = []           # List[label tensors]
+        # Recover shape: [T, N, F]
+        num_snapshots = batch.num_graphs
+        num_nodes_per_snapshot = batch.x.size(0) // num_snapshots
+        feature_dim = x_out.size(1)
 
-        for window_num in range(num_windows):
-            input_start = window_num
-            input_end = window_num + self.rnn_window_size
-            target_idx = input_end  # predict on this graph
+        return x_out.view(num_snapshots, num_nodes_per_snapshot, feature_dim)
+        
+    def run_trough_batch(self, batch: Batch, step: Literal['train', 'val', 'test']):
+        window = self.rnn_window_size
 
-            x_sequence = graph_list[input_start:input_end]
-            y_graph = graph_list[target_idx]
+        # Step 1: GNN (batched)
+        gnn_features = self.precompute_features(batch)  # [T, N, F]
+        T, N, F = gnn_features.shape
+        num_windows = T - window
 
-            # Get edges and labels for this target graph
+        # Step 2: Build RNN input
+        # Result: [num_windows, window, N, F]
+        x_windows = torch.stack([
+            gnn_features[i:i + window] for i in range(num_windows)
+        ], dim=0)
+
+        # RNN input shape: [batch=N*num_windows, window, F]
+        x_windows = x_windows.permute(2, 0, 1, 3).reshape(N * num_windows, window, F)
+
+        # Step 3: RNN forward (batch_first=True)
+        rnn_out, _ = self.rnn(x_windows)  # [N * num_windows, window, H]
+        rnn_last = rnn_out[:, -1, :]      # [N * num_windows, H]
+
+        # Reshape back to [num_windows, N, H]
+        rnn_last = rnn_last.view(N, num_windows, -1).permute(1, 0, 2)  # [num_windows, N, H]
+
+        # Step 4: Prepare decoding
+        graph_list = batch.to_data_list()[window:]  # list of graphs to predict
+        all_pos_edges = []
+        all_neg_edges = []
+        all_labels = []
+        all_edge_labels = []
+        all_node_reprs = []
+
+        for i, y_graph in enumerate(graph_list):  # i ∈ [0, num_windows-1]
             pos_edges = y_graph.edge_index
-            num_neg = max(pos_edges.size(1), self.negative_edge_sampling_min)
-
             neg_edges = negative_sampling(
                 edge_index=pos_edges,
                 num_nodes=y_graph.num_nodes,
-                num_neg_samples=num_neg
+                num_neg_samples=max(pos_edges.size(1), self.negative_edge_sampling_min)
             )
-
             edge_pairs = torch.cat([pos_edges, neg_edges], dim=1)
-            edge_labels = torch.cat([
+            labels = torch.cat([
                 torch.ones(pos_edges.size(1)),
                 torch.zeros(neg_edges.size(1))
-            ]).to(self.device)
+            ])
 
-            rnn_input_sequences.append(x_sequence)
-            edge_pairs_batch.append(edge_pairs.to(self.device))
-            label_batch.append(edge_labels)
+            all_pos_edges.append(pos_edges)
+            all_neg_edges.append(neg_edges)
+            all_labels.append(labels)
+            all_edge_labels.append(y_graph.y)
+            all_node_reprs.append(rnn_last[i])  # [N, H]
 
-        # 3. Convert list of sequences → [B, T, N, F] tensor
-        B = len(rnn_input_sequences)
-        T = self.rnn_window_size
-        N = graph_list[0].num_nodes
-        Fs = graph_list[0].x.size(1)
+        # Step 5: Batch everything
+        all_edge_pairs = []
+        all_logits_labels = []
+        all_class_targets = []
+        all_class_logits = []
 
-        graph_tensor = torch.zeros(B, T, N, Fs, device=self.device)
+        total_loss = 0.0
+        for i in range(num_windows):
+            node_repr = all_node_reprs[i]                  # [N, H]
+            edge_pairs = torch.cat([all_pos_edges[i], all_neg_edges[i]], dim=1)  # [2, E]
+            labels = all_labels[i]                         # [E]
+            edge_labels = all_edge_labels[i]               # [E_pos]
 
-        for b, seq in enumerate(rnn_input_sequences):
-            for t, graph in enumerate(seq):
-                graph_tensor[b, t] = graph.x  # assumes consistent node ordering
+            link_pred, link_class = self.forward(node_repr, edge_pairs)  # [E], [E, C]
 
-        # 4. Run model forward
-        link_pred, link_class = self.forward2(graph_tensor, edge_pairs_batch)
+            pred_loss = F.binary_cross_entropy_with_logits(link_pred, labels.float())
 
-        # 5. Compute losses
-        all_labels = torch.cat(label_batch)  # shape: [total_edges]
-        pred_loss = F.binary_cross_entropy_with_logits(link_pred, all_labels.float())
+            if edge_labels.numel() > 0:
+                class_logits = link_class[labels.bool()]
+                class_loss = F.cross_entropy(class_logits, edge_labels.long())
 
-        # Classification: Only compute for positive edges
-        positive_mask = all_labels.bool()
-        link_class_pos = link_class[positive_mask]
+                self.link_class_acc(class_logits, edge_labels.int())
+                if edge_labels.unique().numel() > 1:
+                    self.link_class_auc(class_logits, edge_labels.int())
 
-        edge_type_labels = torch.cat([
-            graph_list[i + self.rnn_window_size].y.to(self.device)
-            for i in range(num_windows)
-        ])
+                self.mal_count.update(edge_labels.count_nonzero() / edge_labels.size(0))
+            else:
+                class_loss = torch.tensor(0.0)
 
-        if positive_mask.any():
-            class_loss = F.cross_entropy(link_class_pos, edge_type_labels.long())
-            class_acc = self.link_class_acc(link_class_pos, edge_type_labels.int())
+            loss = pred_loss + self.pred_alpha * class_loss
+            total_loss += loss
 
-            if edge_type_labels.unique().numel() > 1:
-                class_auc = self.link_class_auc(link_class_pos, edge_type_labels.int())
+            # Metrics
+            self.model_loss.update(loss)
+            self.link_predict_acc(link_pred, labels.int())
+            if labels.unique().numel() > 1:
+                self.link_predict_auc(link_pred, labels.int())
 
-            self.mal_count.update(edge_type_labels.count_nonzero() / edge_type_labels.size(0))
-        else:
-            class_loss = torch.tensor(0.0, device=self.device)
+        avg_loss = total_loss / num_windows
 
-        # Combine losses
-        loss = pred_loss + self.pred_alpha * class_loss
-        self.model_loss.update(loss)
-
-        # Metrics
-        pred_acc = self.link_predict_acc(link_pred, all_labels.int())
-        if all_labels.unique().numel() > 1:
-            pred_auc = self.link_predict_auc(link_pred, all_labels.int())
-
-        # 6. Return metrics
         return {
-            "loss": self.model_loss.compute(),
+            "loss": avg_loss,
             "pred_acc": self.link_predict_acc.compute(),
             "pred_auc": self.link_predict_auc.compute() if self.link_predict_auc.update_count > 0 else 0,
             "class_acc": self.link_class_acc.compute(),
             "class_auc": self.link_class_auc.compute() if self.link_class_auc.update_count > 0 else 0,
             "mal_count": self.mal_count.compute()
         }
+
 
     def training_step(self, batch: Batch, batch_idx):
         """Trains the model on one batch of temporal graphs."""
