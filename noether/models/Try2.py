@@ -153,7 +153,6 @@ class LitFullModel(L.LightningModule):
         link_class_logits = self.link_classifier(predicted_embeddings[src], predicted_embeddings[dst]) # shape [num_edges]
 
         return link_pred_scores, link_class_logits
-    
     def precompute_features(self, graph_list: List[BaseData]) -> torch.Tensor:
         features = [self.gnn(data.x, data.edge_index, data.edge_attr) for data in graph_list]
         features = torch.stack(features)
