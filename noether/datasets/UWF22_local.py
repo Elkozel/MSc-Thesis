@@ -3,13 +3,14 @@ import os
 import inspect
 import math
 import logging
-from typing import Any, Generator, Literal, Optional, Union
+from typing import Any, Callable, Generator, List, Literal, Optional, Union
 import requests
 import torch
 import numpy as np
 from tqdm.auto import tqdm
 import pandas as pd
 from ordered_set import OrderedSet
+from torch.utils.data import DataLoader
 from torch.utils.data import random_split, TensorDataset
 from torch_geometric.data import Data, HeteroData
 from torch_geometric.data.data import BaseData
@@ -63,7 +64,8 @@ class UWF22L(L.LightningDataModule):
                  bin_size: int = 20,
                  batch_size: int = 350,
                  from_time: int = 0,
-                 to_time: int = 5552151, # (Relative) timestamp of last event is 5552150.949952126
+                 to_time: int = 10005552151, # (Relative) timestamp of last event is 10005552150.949951 
+                 
                  transforms: list = [],
                  batch_split: list = [0.6, 0.25, 0.15],
                  dataset_name: str = "UWF22"):
@@ -366,32 +368,55 @@ class UWF22L(L.LightningDataModule):
             yield Batch.from_data_list(batch)
 
     def train_dataloader(self):
-        dataset = CustomBatchDataset(self, stage="train")
-        return dataset
+        stage = 0 # Training
+
+        all_batch_masks = torch.cat([self.batch_mask[file["raw_file"]] for file in self.download_data])
+        num_batches = int((all_batch_masks == stage).count_nonzero())
+
+        dataset = GeneratorDataset(
+            generator_fn=lambda: self.batch_generator("train"),
+            length=num_batches
+        )
+
+        return DataLoader(dataset,
+                          collate_fn=lambda x: x[0])
     
     def val_dataloader(self):
-        dataset = CustomBatchDataset(self, stage="val")
-        return dataset
+        stage = 1 # Validation
+
+        all_batch_masks = torch.cat([self.batch_mask[file["raw_file"]] for file in self.download_data])
+        num_batches = int((all_batch_masks == stage).count_nonzero())
+
+        dataset = GeneratorDataset(
+            generator_fn=lambda: self.batch_generator("val"),
+            length=num_batches
+        )
+
+        return DataLoader(dataset,
+                          collate_fn=lambda x: x[0])
     
     def test_dataloader(self):
-        dataset = CustomBatchDataset(self, stage="test")
-        return dataset
+        stage = 2 # Testing
 
-class CustomBatchDataset(torch.utils.data.IterableDataset):
-    def __init__(self, data_module, stage: Literal['train', 'val', 'test'], estimated_len: int = 0):
-        self.data_module = data_module
-        self.stage = 0 if stage == "train" else 1 if stage == "val" else 2
-        self._length = self.calulate_length() if estimated_len == 0 else estimated_len
+        all_batch_masks = torch.cat([self.batch_mask[file["raw_file"]] for file in self.download_data])
+        num_batches = int((all_batch_masks == stage).count_nonzero())
 
-    def calulate_length(self):
-        all_batch_masks = [self.data_module.batch_mask[file["raw_file"]] for file in self.data_module.download_data]
-        sum_batch_masks = [torch.sum(mask == self.stage) for mask in all_batch_masks]
-        return sum(sum_batch_masks)
+        dataset = GeneratorDataset(
+            generator_fn=lambda: self.batch_generator("test"),
+            length=num_batches
+        )
+
+        return DataLoader(dataset,
+                          collate_fn=lambda x: x[0])
     
+class GeneratorDataset(torch.utils.data.IterableDataset):
+    def __init__(self, generator_fn: Callable, length: int):
+        super().__init__()
+        self.generator_fn = generator_fn
+        self._length = length
+
     def __iter__(self):
-        return self.data_module.batch_generator(self.stage)
+        return self.generator_fn()
 
     def __len__(self):
-        if self._length is not None:
-            return self._length
-        raise TypeError("Length is not defined for streaming dataset.")
+        return self._length
