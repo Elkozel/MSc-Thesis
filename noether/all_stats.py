@@ -166,7 +166,7 @@ from tqdm.auto import tqdm
 
 tqdm.pandas()
 
-dataset_folder = "/home/thristov/mnt/noether/datasets/"
+dataset_folder = "/data/datasets/"
 output_folder = "/data/Try1/noether/data_stats/"
 results = {}
 
