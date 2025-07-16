@@ -246,12 +246,12 @@ class LitFullModel(L.LightningModule):
         if num_windows < 1:
             warnings.warn(f"Training batch ID: {batch_idx} (size {batch.num_graphs}) is not enough \
                           for a full window of {self.rnn_window_size}")
-            return torch.tensor(0.0, requires_grad=True).to(self.device)
+            return torch.tensor(0.0, requires_grad=True)
         
         try:
             results = self.run_trough_batch(batch, step)
         except:
-            return torch.tensor(0.0, requires_grad=True).to(self.device)
+            return torch.tensor(0.0, requires_grad=True)
         
         # Logging
         for metric, value in results.items():
@@ -267,12 +267,12 @@ class LitFullModel(L.LightningModule):
         if num_windows < 1:
             warnings.warn(f"Validation batch ID: {batch_idx} (size {batch.num_graphs}) is not enough \
                           for a full window of {self.rnn_window_size}")
-            return torch.tensor(0.0, requires_grad=True).to(self.device)
+            return torch.tensor(0.0, requires_grad=True)
             
         try:
             results = self.run_trough_batch(batch, step)
         except:
-            return torch.tensor(0.0, requires_grad=True).to(self.device)
+            return torch.tensor(0.0, requires_grad=True)
         
         # Logging
         for metric, value in results.items():
@@ -288,12 +288,12 @@ class LitFullModel(L.LightningModule):
         if num_windows < 1:
             warnings.warn(f"Testing batch ID: {batch_idx} (size {batch.num_graphs}) is not enough \
                           for a full window of {self.rnn_window_size}")
-            return torch.tensor(0.0, requires_grad=True).to(self.device)
+            return torch.tensor(0.0, requires_grad=True)
             
         try:
             results = self.run_trough_batch(batch, step)
         except:
-            return torch.tensor(0.0, requires_grad=True).to(self.device)
+            return torch.tensor(0.0, requires_grad=True)
         
         # Logging
         for metric, value in results.items():
