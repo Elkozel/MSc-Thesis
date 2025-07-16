@@ -6,7 +6,7 @@ import lightning as L
 import torch.nn.functional as F
 from typing import List, Literal, Union
 from torch_geometric.nn import GCNConv
-from torch_geometric.utils import negative_sampling
+from torch_geometric.utils import negative_sampling, batched_negative_sampling
 from torch_geometric.data import Data, Batch
 from torch_geometric.data.data import BaseData
 
@@ -108,6 +108,7 @@ class LitFullModel(L.LightningModule):
         self.link_class_acc = torchmetrics.Accuracy(task="multiclass", num_classes=out_classes)
         self.link_class_auc = torchmetrics.AUROC(task="multiclass", num_classes=out_classes)
 
+        self.mal_acc = torchmetrics.Accuracy(task="binary", threshold=0.5)
         self.mal_count = torchmetrics.MeanMetric()
         self.model_loss = torchmetrics.MeanMetric()
 
@@ -146,81 +147,97 @@ class LitFullModel(L.LightningModule):
 
         return link_pred_scores, link_class_logits
     
-    def precompute_features(self, graph_list: List[BaseData]) -> torch.Tensor:
-        features = [self.gnn(data.x, data.edge_index, data.edge_attr) for data in graph_list]
-        features = torch.stack(features)
-        return features
+    def run_trough_batch(self, data: Batch, stage: Literal['train', 'val', 'test']):
 
-    def run_trough_batch(self, batch: Batch, num_windows: int, step: Literal['train', 'val', 'test']):
-        graph_list = batch.to_data_list()        
-        total_loss = torch.tensor(0.0).to(self.device)
-        gnn_features = self.precompute_features(graph_list)
-            
-        for i in range(num_windows):
-            to_idx = i + self.rnn_window_size
-            x_features = gnn_features[i:to_idx]
-            y_graph = batch.get_example(to_idx)
-            
-            assert y_graph.edge_index is not None
-            assert isinstance(y_graph.y, torch.Tensor)
+        ### GNN Encoding ###
+        gnn_features = self.gnn(data.x, data.edge_index, data.edge_attr)
+        data.x = gnn_features # [Host* , hidden_dim]
 
-            # Positive and negative edge sampling
-            positive_edges = y_graph.edge_index
-            negative_edges = negative_sampling(
-                edge_index=y_graph.edge_index,
-                num_nodes=y_graph.num_nodes,
-                num_neg_samples=max(positive_edges.size(1), self.negative_edge_sampling_min)
-            )
-            edge_labels = y_graph.y
+        # RNN
+        # Important assumption, the X axis is the same on all graphs
 
-            edge_pairs = torch.cat([positive_edges, negative_edges], dim=1)
-            labels = torch.cat([
-                torch.ones(positive_edges.size(1)),
-                torch.zeros(negative_edges.size(1))
-            ]).to(self.device)
+        # Create a batch for each sliding window to be run trough the RNN (in one run)
+        graph_list = data.to_data_list()
+        num_windows = data.num_graphs - self.rnn_window_size
+        num_nodes = graph_list[0].num_nodes
+        assert num_nodes is not None
 
-            # Grab scores
-            link_pred, link_class = self(x_features, edge_pairs)
+        rnn_batch = torch.stack([
+            torch.stack([graph_list[t + i].x for i in range(self.rnn_window_size)])  # shape [window_size, Node, Feature]
+            for t in range(num_windows)
+        ])  # Final shape: [num_windows, window_size, Nnode, Feature]
+        
+        # Permute to [num_windows, num_nodes, window_size, features]
+        rnn_batch = rnn_batch.permute(0, 2, 1, 3)  # [Batch, Node, Window, Feature]
+        rnn_batch = rnn_batch.reshape(-1, self.rnn_window_size, rnn_batch.shape[-1])  # [Batch * Node, Window, Feature]
+        rnn_output, _ = self.rnn(rnn_batch)  # [Batch * Node, Window, Feature]
+        hidden_dim = rnn_output[:, -1, :].shape[-1]
+        rnn_predicted_embeddings = rnn_output[:, -1, :].view(num_windows * num_nodes, hidden_dim) # [Batch * Host, Features]
 
-            # Calculate the loss for link prediction
-            pred_loss = F.binary_cross_entropy_with_logits(link_pred, labels.float())
+        # Adjust for the offset, as each prediction is for the next timestep in the batch. This is done by 
+        # increasing the ID of the node by the size of the nodes per graph (as all graphs have the same node size)
+        start = self.rnn_window_size * num_nodes
+        data.x[start:, :] = rnn_predicted_embeddings
 
-            # Mask the score
-            link_class = link_class[labels.bool()]
-            if positive_edges.any():
-                class_loss = F.cross_entropy(link_class, edge_labels.long())
-                class_acc = self.link_class_acc(link_class, edge_labels.int())
-                # Only update AUC if there are different classes in the labels
-                if edge_labels.unique().size(dim=0) > 1:
-                    class_auc = self.link_class_auc(link_class, edge_labels.int())
+        # Decoder
+        # Create positive and negative edge indecies
+        edge_sources = data.edge_index[0]
+        edge_batch = data.batch[edge_sources]
+        positive_edges = data.edge_index[:, edge_batch >= self.rnn_window_size] # Only grab edges from 
 
-                self.mal_count.update(edge_labels.count_nonzero() / edge_labels.size(0))
-            else:
-                class_loss = torch.tensor(0.0, device=self.device)
+        if positive_edges.size(1) == 0:
+            raise Exception("Positive edges are 0")
+        
+        negative_edges = batched_negative_sampling(
+            positive_edges,
+            data.batch
+        )
+        test_edges = torch.cat([
+            positive_edges,
+            negative_edges.int()
+        ], dim=1)
+        edge_label = torch.cat([
+            torch.ones(positive_edges.size(1)),
+            torch.zeros(negative_edges.size(1))
+        ])
+        edge_class = torch.cat([
+            data.y[edge_batch >= self.rnn_window_size],
+            torch.zeros(negative_edges.size(1))
+        ])
 
-            loss = pred_loss + self.pred_alpha * class_loss
+        # Run the full decoding with the batch
+        src = test_edges[0]
+        dst = test_edges[1]
+        predicted_embeddings = data.x
+        link_pred = self.link_pred(predicted_embeddings[src], predicted_embeddings[dst])  # shape [num_edges]
+        link_class = self.link_classifier(predicted_embeddings[src], predicted_embeddings[dst]) # shape [num_edges]
 
-            # Update metrics
-            self.model_loss.update(loss)
-            pred_acc = self.link_predict_acc(link_pred, labels.int())
+        # Calculate loss
+        pred_loss = F.binary_cross_entropy_with_logits(link_pred, edge_label.float())
+        class_loss = F.cross_entropy(link_class, edge_class.long())
+        loss = pred_loss + self.pred_alpha * class_loss
 
-            # Only update AUC if there are different classes in the labels
-            if labels.unique().size(dim=0) > 1:
-                pred_auc = self.link_predict_auc(link_pred, labels.int())
-            
-            total_loss += loss
+        pred_acc = self.link_predict_acc(link_pred, edge_label.int())
+        class_acc = self.link_class_acc(link_class, edge_class.int())
 
-        avg_loss = total_loss / num_windows
 
+        pred_auc = self.link_predict_auc(link_pred, edge_label.int())
+        class_auc = self.link_class_auc(link_class, edge_class.int()) if edge_class.sum() > 0 else 0
+
+        mal_acc = self.mal_acc((torch.argmax(link_class, dim=1) > 0.5).int(), (edge_class > 0.5).int())
+        mal_count = self.mal_count(edge_class.count_nonzero())
+
+        # Calculate all metrics (also for the full batch)
         return {
-            "loss": avg_loss,
-            "pred_acc": self.link_predict_acc.compute(),
-            "pred_auc": self.link_predict_auc.compute() if self.link_predict_auc.update_count > 0 else 0,
-            "class_acc": self.link_class_acc.compute(),
-            "class_auc": self.link_class_auc.compute() if self.link_class_auc.update_count > 0 else 0,
-            "mal_count": self.mal_count.compute()
+            "loss": loss,
+            "pred_acc": pred_acc,
+            "pred_auc": pred_auc,
+            "class_acc": class_acc,
+            "class_auc": class_auc,
+            "mal_acc": mal_acc,
+            "mal_count": mal_count
         }
-
+    
     def training_step(self, batch: Batch, batch_idx):
         """Trains the model on one batch of temporal graphs."""
         num_windows = batch.num_graphs - (self.rnn_window_size + 1)
@@ -229,13 +246,16 @@ class LitFullModel(L.LightningModule):
         if num_windows < 1:
             warnings.warn(f"Training batch ID: {batch_idx} (size {batch.num_graphs}) is not enough \
                           for a full window of {self.rnn_window_size}")
-            return torch.tensor(0.0, requires_grad=True).to(self.device)
-            
-        results = self.run_trough_batch(batch, num_windows, step)
+            return torch.tensor(0.0, requires_grad=True)
+        
+        try:
+            results = self.run_trough_batch(batch, step)
+        except:
+            return torch.tensor(0.0, requires_grad=True)
         
         # Logging
         for metric, value in results.items():
-            self.log(f"{step}_{metric}", value, batch_size=batch.num_graphs, on_epoch=True)
+            self.log(f"{step}_{metric}", value, batch_size=batch.num_graphs, on_epoch=True, sync_dist=True)
 
         return results["loss"]
     
@@ -247,13 +267,16 @@ class LitFullModel(L.LightningModule):
         if num_windows < 1:
             warnings.warn(f"Validation batch ID: {batch_idx} (size {batch.num_graphs}) is not enough \
                           for a full window of {self.rnn_window_size}")
-            return torch.tensor(0.0, requires_grad=True).to(self.device)
+            return torch.tensor(0.0, requires_grad=True)
             
-        results = self.run_trough_batch(batch, num_windows, step)
+        try:
+            results = self.run_trough_batch(batch, step)
+        except:
+            return torch.tensor(0.0, requires_grad=True)
         
         # Logging
         for metric, value in results.items():
-            self.log(f"{step}_{metric}", value, batch_size=batch.num_graphs, on_epoch=True)
+            self.log(f"{step}_{metric}", value, batch_size=batch.num_graphs, on_epoch=True, sync_dist=True)
 
         return results["loss"]
     
@@ -265,13 +288,16 @@ class LitFullModel(L.LightningModule):
         if num_windows < 1:
             warnings.warn(f"Testing batch ID: {batch_idx} (size {batch.num_graphs}) is not enough \
                           for a full window of {self.rnn_window_size}")
-            return torch.tensor(0.0, requires_grad=True).to(self.device)
+            return torch.tensor(0.0, requires_grad=True)
             
-        results = self.run_trough_batch(batch, num_windows, step)
+        try:
+            results = self.run_trough_batch(batch, step)
+        except:
+            return torch.tensor(0.0, requires_grad=True)
         
         # Logging
         for metric, value in results.items():
-            self.log(f"{step}_{metric}", value, batch_size=batch.num_graphs, on_epoch=True)
+            self.log(f"{step}_{metric}", value, batch_size=batch.num_graphs, on_epoch=True, sync_dist=True)
 
         return results["loss"]
 
