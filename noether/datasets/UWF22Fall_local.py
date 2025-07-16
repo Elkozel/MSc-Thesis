@@ -66,7 +66,7 @@ class UWF22FallL(UWF22L):
                  data_dir: str, 
                  bin_size: int = 20, 
                  batch_size: int = 350, 
-                 from_time: int = 0, 
+                 from_time: int = 0,
                  to_time: int = 26816821, # (Relative) timestamp of last event is 26816820.542023897
                  transforms: list = [],
                  batch_split: list = [0.6, 0.25, 0.15], 

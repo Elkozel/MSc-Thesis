@@ -64,7 +64,7 @@ class UWF22L(L.LightningDataModule):
                  bin_size: int = 20,
                  batch_size: int = 350,
                  from_time: int = 0,
-                 to_time: int = 10005552151, # (Relative) timestamp of last event is 10005552150.949951 
+                 to_time: int = 5552151, # Max timestamp is 1645298196.163731
                  
                  transforms: list = [],
                  batch_split: list = [0.6, 0.25, 0.15],
@@ -158,7 +158,7 @@ class UWF22L(L.LightningDataModule):
         from_bin = (from_time // self.bin_size) * self.bin_size
         to_bin = (to_time // self.bin_size) * self.bin_size
         bin_range = range(from_bin, to_bin, self.bin_size)
-        num_batches = math.ceil(len(bin_range) / self.batch_size)
+        num_batches = math.floor(len(bin_range) / self.batch_size) + 1
 
         # Create full batch index tensor for this file
         full_idx = torch.arange(num_batches)

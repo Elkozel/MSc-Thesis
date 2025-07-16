@@ -68,13 +68,13 @@ class UWF24FallL(UWF22L):
                  bin_size: int = 20,
                  batch_size: int = 350,
                  from_time: int = 0,
-                 to_time: int = 0, # (Relative) timestamp of last event is 21758350.529811144
+                 to_time: int = 6835980, # (Relative) timestamp of last event is 6835979.18627286
                  transforms: list = [],
                  batch_split: list = [0.6, 0.25, 0.15],
                  dataset_name: str = "UWF24Fall"):
         super().__init__(data_dir, bin_size, batch_size, from_time, to_time, transforms, batch_split, dataset_name)
 
-        self.ts_first_event = 0 # This allows us to easily make time relative
+        self.ts_first_event = 1726952812.207993 # This allows us to easily make time relative
 
         # Lastly, save those hyperparams
         self.save_hyperparameters()
