@@ -68,7 +68,9 @@ nodemap.bson
 maps.bson
 *.pkl
 *.parquet
-*.svg
+
+# Dataset stats
+data_stats/
 
 # Comet
 .comet.config
