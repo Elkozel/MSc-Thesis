@@ -102,15 +102,33 @@ class LitFullModel(L.LightningModule):
         self.link_pred = MLPDecoder(hidden_channels, 1)
         self.link_classifier = LinkTypeClassifier(hidden_channels, out_classes)
 
-        self.link_predict_acc = torchmetrics.Accuracy(task="binary", threshold=binary_threshold)
-        self.link_predict_auc = torchmetrics.AUROC(task="binary")
+        self.link_pred_metrics = {
+            "pred_acc": torchmetrics.Accuracy(task="binary", threshold=binary_threshold),
+            "pred_auc": torchmetrics.AUROC(task="binary"),
+            "pred_f1": torchmetrics.F1Score(task="binary"),
+            "pred_ap": torchmetrics.AveragePrecision(task="binary")
+        }
 
-        self.link_class_acc = torchmetrics.Accuracy(task="multiclass", num_classes=out_classes)
-        self.link_class_auc = torchmetrics.AUROC(task="multiclass", num_classes=out_classes)
+        self.link_class_metrics = {
+            "class_acc": torchmetrics.Accuracy(task="multiclass", num_classes=out_classes),
+            "class_auc": torchmetrics.AUROC(task="multiclass", num_classes=out_classes),
+            "class_f1": torchmetrics.F1Score(task="multiclass", num_classes=out_classes),
+            "class_ap": torchmetrics.AveragePrecision(task="multiclass", num_classes=out_classes)
+        }
 
-        self.mal_acc = torchmetrics.Accuracy(task="binary", threshold=0.5)
-        self.mal_count = torchmetrics.MeanMetric()
-        self.model_loss = torchmetrics.MeanMetric()
+        self.mal_metrics = {
+            "mal_acc": torchmetrics.Accuracy(task="binary", threshold=binary_threshold),
+            "mal_auc": torchmetrics.AUROC(task="binary"),
+            "mal_f1": torchmetrics.F1Score(task="binary"),
+            "mal_ap": torchmetrics.AveragePrecision(task="binary")
+        }
+
+        self.mal_only_metrics = {
+            "mal_only_acc": torchmetrics.Accuracy(task="binary", threshold=binary_threshold),
+            "mal_only_auc": torchmetrics.AUROC(task="binary"),
+            "mal_only_f1": torchmetrics.F1Score(task="binary"),
+            "mal_only_ap": torchmetrics.AveragePrecision(task="binary")
+        }
 
         self.rnn_window_size = rnn_window_size
         self.model_name = model_name
@@ -186,7 +204,7 @@ class LitFullModel(L.LightningModule):
         positive_edges = data.edge_index[:, edge_batch >= self.rnn_window_size] # Only grab edges from 
 
         if positive_edges.size(1) == 0:
-            raise Exception("Positive edges are 0")
+            raise NoPositiveEdgesException(f"Positive edges are {positive_edges.size(1)}")
         
         negative_edges = batched_negative_sampling(
             positive_edges,
@@ -196,11 +214,11 @@ class LitFullModel(L.LightningModule):
             positive_edges,
             negative_edges.int()
         ], dim=1)
-        edge_label = torch.cat([
+        edge_pred_labels = torch.cat([
             torch.ones(positive_edges.size(1)),
             torch.zeros(negative_edges.size(1))
         ])
-        edge_class = torch.cat([
+        edge_class_labels = torch.cat([
             data.y[edge_batch >= self.rnn_window_size],
             torch.zeros(negative_edges.size(1))
         ])
@@ -213,29 +231,75 @@ class LitFullModel(L.LightningModule):
         link_class = self.link_classifier(predicted_embeddings[src], predicted_embeddings[dst]) # shape [num_edges]
 
         # Calculate loss
-        pred_loss = F.binary_cross_entropy_with_logits(link_pred, edge_label.float())
-        class_loss = F.cross_entropy(link_class, edge_class.long())
+        pred_loss = F.binary_cross_entropy_with_logits(link_pred, edge_pred_labels.float())
+        class_loss = F.cross_entropy(link_class, edge_class_labels.long())
         loss = pred_loss + self.pred_alpha * class_loss
 
-        pred_acc = self.link_predict_acc(link_pred, edge_label.int())
-        class_acc = self.link_class_acc(link_class, edge_class.int())
 
+        # Metrics from link prediction
+        for name, metric in self.link_pred_metrics.items():
+            # If you give the AUROC metrics only true labels, 
+            # it compains
+            if name.endswith("_auc") or name.endswith("_ap"):
+                # So we skip when only true labels are present
+                if edge_class_labels.sum() == 0:
+                    continue
+            metric(link_pred, edge_pred_labels.int())
 
-        pred_auc = self.link_predict_auc(link_pred, edge_label.int())
-        class_auc = self.link_class_auc(link_class, edge_class.int()) if edge_class.sum() > 0 else 0
+        # Metrics from link classification
+        for name, metric in self.link_class_metrics.items():
+            # If you give the AUROC metrics only true labels, 
+            # it compains
+            if name.endswith("_auc") or name.endswith("_ap"):
+                # So we skip when only true labels are present
+                if edge_class_labels.sum() == 0:
+                    continue
+            metric(link_class, edge_class_labels.int())
 
-        mal_acc = self.mal_acc((torch.argmax(link_class, dim=1) > 0.5).int(), (edge_class > 0.5).int())
-        mal_count = self.mal_count(edge_class.count_nonzero())
+        # Metrics from overall malicious event prediction
+        malicious_event_mask = (edge_class_labels > 0.5).int()
+
+        for name, metric in self.mal_metrics.items():
+            # If you give the AUROC metrics only true labels, 
+            # it compains
+            if name.endswith("_auc") or name.endswith("_ap"):
+                # So we skip when only true labels are present
+                if edge_class_labels.sum() == 0:
+                    continue
+            
+            metric((torch.argmax(link_class, dim=1) > 0.5).int(), malicious_event_mask)
+
+        # Metrics from only malicious events        
+        for name, metric in self.mal_only_metrics.items():
+            # If you give the AUROC metrics only true labels, 
+            # it compains
+            if name.endswith("_auc") or name.endswith("_ap"):
+                # So we skip when only true labels are present
+                if edge_class_labels.sum() == 0:
+                    continue
+
+            if malicious_event_mask.sum() > 0:
+                metric(torch.masked_select(torch.argmax(link_class, dim=1), malicious_event_mask.bool()), torch.masked_select(edge_class_labels, malicious_event_mask.bool()))
+        
 
         # Calculate all metrics (also for the full batch)
+        metrics: dict[str, torchmetrics.Metric] = dict()
+        metrics.update(self.link_pred_metrics)
+        metrics.update(self.link_class_metrics)
+        metrics.update(self.mal_metrics)
+        metrics.update(self.mal_only_metrics)
+        matric_results = {
+            key: metric.compute() if metric.update_count > 0 else 0
+            for key, metric in metrics.items()
+        }
+        for metric in metrics.values():
+            metric.reset()
+
         return {
             "loss": loss,
-            "pred_acc": pred_acc,
-            "pred_auc": pred_auc,
-            "class_acc": class_acc,
-            "class_auc": class_auc,
-            "mal_acc": mal_acc,
-            "mal_count": mal_count
+            "mal_count": int(edge_class_labels.count_nonzero()),
+            "edge_count": positive_edges.size(1),
+            **matric_results
         }
     
     def training_step(self, batch: Batch, batch_idx):
@@ -250,12 +314,12 @@ class LitFullModel(L.LightningModule):
         
         try:
             results = self.run_trough_batch(batch, step)
-        except:
+        except NoPositiveEdgesException as e:
             return torch.tensor(0.0, requires_grad=True)
         
         # Logging
         for metric, value in results.items():
-            self.log(f"{step}_{metric}", value, batch_size=batch.num_graphs, on_epoch=True, sync_dist=True)
+            self.log(f"{step}_{metric}", value, batch_size=batch.num_graphs, sync_dist=True)
 
         return results["loss"]
     
@@ -276,7 +340,7 @@ class LitFullModel(L.LightningModule):
         
         # Logging
         for metric, value in results.items():
-            self.log(f"{step}_{metric}", value, batch_size=batch.num_graphs, on_epoch=True, sync_dist=True)
+            self.log(f"{step}_{metric}", value, batch_size=batch.num_graphs, sync_dist=True)
 
         return results["loss"]
     
@@ -297,7 +361,7 @@ class LitFullModel(L.LightningModule):
         
         # Logging
         for metric, value in results.items():
-            self.log(f"{step}_{metric}", value, batch_size=batch.num_graphs, on_epoch=True, sync_dist=True)
+            self.log(f"{step}_{metric}", value, batch_size=batch.num_graphs, sync_dist=True)
 
         return results["loss"]
 
@@ -305,3 +369,7 @@ class LitFullModel(L.LightningModule):
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=1e-3)
         return optimizer
+    
+
+class NoPositiveEdgesException(Exception):
+    pass
