@@ -124,10 +124,10 @@ class LitFullModel(L.LightningModule):
         }
 
         self.mal_only_metrics = {
-            "mal_only_acc": torchmetrics.Accuracy(task="binary", threshold=binary_threshold),
-            "mal_only_auc": torchmetrics.AUROC(task="binary"),
-            "mal_only_f1": torchmetrics.F1Score(task="binary"),
-            "mal_only_ap": torchmetrics.AveragePrecision(task="binary")
+            "mal_only_acc": torchmetrics.Accuracy(task="multiclass", num_classes=out_classes),
+            "mal_only_auc": torchmetrics.AUROC(task="multiclass", num_classes=out_classes),
+            "mal_only_f1": torchmetrics.F1Score(task="multiclass", num_classes=out_classes),
+            "mal_only_ap": torchmetrics.AveragePrecision(task="multiclass", num_classes=out_classes),
         }
 
         self.rnn_window_size = rnn_window_size
@@ -267,7 +267,7 @@ class LitFullModel(L.LightningModule):
                 if edge_class_labels.sum() == 0:
                     continue
             
-            metric((torch.argmax(link_class, dim=1) > 0.5).int(), malicious_event_mask)
+            metric((torch.argmax(link_class, dim=1) > 0.5).float(), malicious_event_mask)
 
         # Metrics from only malicious events        
         for name, metric in self.mal_only_metrics.items():
@@ -277,9 +277,11 @@ class LitFullModel(L.LightningModule):
                 # So we skip when only true labels are present
                 if edge_class_labels.sum() == 0:
                     continue
-
             if malicious_event_mask.sum() > 0:
-                metric(torch.masked_select(torch.argmax(link_class, dim=1), malicious_event_mask.bool()), torch.masked_select(edge_class_labels, malicious_event_mask.bool()))
+                expanded_malicious_event_mask = malicious_event_mask.reshape(malicious_event_mask.size(0),1).expand(link_class.shape).bool()
+                malicious_labels = torch.masked_select(edge_class_labels, malicious_event_mask.bool())
+                malicious_predictions = torch.masked_select(link_class, expanded_malicious_event_mask).reshape(malicious_labels.size(0), -1)
+                metric(malicious_predictions, malicious_labels)
         
 
         # Calculate all metrics (also for the full batch)
