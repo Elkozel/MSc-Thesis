@@ -320,7 +320,7 @@ class LitFullModel(L.LightningModule):
         
         # Logging
         for metric, value in results.items():
-            self.log(f"{step}_{metric}", value, batch_size=batch.num_graphs, sync_dist=True)
+            self.log(f"{step}_{metric}", value, sync_dist=True)
 
         return results["loss"]
     
@@ -341,7 +341,7 @@ class LitFullModel(L.LightningModule):
         
         # Logging
         for metric, value in results.items():
-            self.log(f"{step}_{metric}", value, batch_size=batch.num_graphs, sync_dist=True)
+            self.log(f"{step}_{metric}", value, sync_dist=True)
 
         return results["loss"]
     
@@ -362,7 +362,7 @@ class LitFullModel(L.LightningModule):
         
         # Logging
         for metric, value in results.items():
-            self.log(f"{step}_{metric}", value, batch_size=batch.num_graphs, sync_dist=True)
+            self.log(f"{step}_{metric}", value, sync_dist=True)
 
         return results["loss"]
 
