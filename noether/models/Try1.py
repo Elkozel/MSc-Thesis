@@ -119,8 +119,9 @@ class LitFullModel(L.LightningModule):
             "mal_acc": torchmetrics.Accuracy(task="binary", threshold=binary_threshold),
             "mal_auc": torchmetrics.AUROC(task="binary"),
             "mal_f1": torchmetrics.F1Score(task="binary"),
-            "mal_ap": torchmetrics.AveragePrecision(task="binary")
+            "mal_ap": torchmetrics.AveragePrecision(task="binary"),
         }
+        self.mal_stat_scores = torchmetrics.StatScores(task="binary")
 
         self.mal_only_metrics = {
             "mal_only_acc": torchmetrics.Accuracy(task="multiclass", num_classes=out_classes),
@@ -280,7 +281,7 @@ class LitFullModel(L.LightningModule):
                 expanded_malicious_event_mask = malicious_event_mask.reshape(malicious_event_mask.size(0),1).expand(link_class.shape).bool()
                 malicious_labels = torch.masked_select(edge_class_labels, malicious_event_mask.bool())
                 malicious_predictions = torch.masked_select(link_class, expanded_malicious_event_mask).reshape(malicious_labels.size(0), -1)
-                metric(malicious_predictions, malicious_labels)
+                metric(malicious_predictions, malicious_labels.int())
         
 
         # Calculate all metrics (also for the full batch)
@@ -296,9 +297,17 @@ class LitFullModel(L.LightningModule):
         for metric in metrics.values():
             metric.reset()
 
+        tp, fp, tn, fn, sup = self.mal_stat_scores((torch.argmax(link_class, dim=1) > 0.5).float(), malicious_event_mask)
+        self.mal_stat_scores.reset()
         return {
             "loss": loss,
             "mal_count": int(edge_class_labels.count_nonzero()),
+            "benign_count": positive_edges.size(1) - int(edge_class_labels.count_nonzero()),
+            "true_positives": tp,
+            "false_positives": fp,
+            "true_negatives": tn,
+            "false_negatives": fn,
+            "support": sup,
             "edge_count": positive_edges.size(1),
             **matric_results
         }
@@ -320,7 +329,7 @@ class LitFullModel(L.LightningModule):
         
         # Logging
         for metric, value in results.items():
-            self.log(f"{step}_{metric}", value, batch_size=batch.num_graphs, sync_dist=True)
+            self.log(f"{step}_{metric}", value, batch_size=batch.num_graphs, on_step=True, sync_dist=True)
 
         return results["loss"]
     
@@ -336,7 +345,7 @@ class LitFullModel(L.LightningModule):
             
         try:
             results = self.run_trough_batch(batch, step)
-        except:
+        except NoPositiveEdgesException as e:
             return torch.tensor(0.0, requires_grad=True)
         
         # Logging
@@ -357,7 +366,7 @@ class LitFullModel(L.LightningModule):
             
         try:
             results = self.run_trough_batch(batch, step)
-        except:
+        except NoPositiveEdgesException as e:
             return torch.tensor(0.0, requires_grad=True)
         
         # Logging
