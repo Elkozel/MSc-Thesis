@@ -4,11 +4,10 @@ import torchmetrics
 import torch.nn as nn
 import lightning as L
 import torch.nn.functional as F
-from typing import List, Literal, Union
+from typing import Literal, Union
 from torch_geometric.nn import GCNConv
-from torch_geometric.utils import negative_sampling, batched_negative_sampling
+from torch_geometric.utils import batched_negative_sampling
 from torch_geometric.data import Data, Batch
-from torch_geometric.data.data import BaseData
 
 class GNNEncoder(nn.Module):
     def __init__(self, in_channels, hidden_channels):
