@@ -301,7 +301,7 @@ class LitFullModel(L.LightningModule):
         self.mal_stat_scores.reset()
         return {
             "loss": loss,
-            "mal_count": int(edge_class_labels.count_nonzero()),
+            "mal_count": edge_class_labels.count_nonzero(),
             "benign_count": positive_edges.size(1) - int(edge_class_labels.count_nonzero()),
             "true_positives": tp,
             "false_positives": fp,
@@ -329,7 +329,7 @@ class LitFullModel(L.LightningModule):
         
         # Logging
         for metric, value in results.items():
-            self.log(f"{step}_{metric}", value, sync_dist=True)
+            self.log(f"{step}_{metric}", value, batch_size=batch.num_graphs, sync_dist=True)
 
         return results["loss"]
     
@@ -350,7 +350,7 @@ class LitFullModel(L.LightningModule):
         
         # Logging
         for metric, value in results.items():
-            self.log(f"{step}_{metric}", value, sync_dist=True)
+            self.log(f"{step}_{metric}", value, batch_size=batch.num_graphs, sync_dist=True)
 
         return results["loss"]
     
@@ -371,7 +371,7 @@ class LitFullModel(L.LightningModule):
         
         # Logging
         for metric, value in results.items():
-            self.log(f"{step}_{metric}", value, sync_dist=True)
+            self.log(f"{step}_{metric}", value, batch_size=batch.num_graphs, sync_dist=True)
 
         return results["loss"]
 
