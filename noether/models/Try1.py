@@ -301,8 +301,8 @@ class LitFullModel(L.LightningModule):
         self.mal_stat_scores.reset()
         return {
             "loss": loss,
-            "mal_count": edge_class_labels.count_nonzero(),
-            "benign_count": positive_edges.size(1) - int(edge_class_labels.count_nonzero()),
+            "mal_count": data.y.count_nonzero(),
+            "benign_count": data.y.size(0) - int(data.y.count_nonzero()),
             "true_positives": tp,
             "false_positives": fp,
             "true_negatives": tn,
