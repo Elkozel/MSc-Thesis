@@ -64,8 +64,7 @@ class UWF22L(L.LightningDataModule):
                  bin_size: int = 20,
                  batch_size: int = 350,
                  from_time: int = 0,
-                 to_time: int = 5552151, # Max timestamp is 1645298196.163731
-                 
+                 to_time: int = 16452990000, # Max timestamp is 1645298196.163731
                  transforms: list = [],
                  account_for_duration: bool = True,
                  batch_split: list = [0.6, 0.25, 0.15],

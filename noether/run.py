@@ -60,8 +60,8 @@ def main():
     check_hetero(args.model, args.dataset)
 
     transformations = [
-        RemoveDuplicatedEdges(key=["edge_attr", "edge_weight", "time", "y"]),
-        RemoveSelfLoops(attr=["edge_attr", "edge_weight", "time", "y"]),
+        # RemoveDuplicatedEdges(key=["edge_attr", "edge_weight", "time", "y"]),
+        # RemoveSelfLoops(attr=["edge_attr", "edge_weight", "time", "y"]),
         AddInOutDegree()
     ]
 
@@ -69,6 +69,7 @@ def main():
         dataset = UWF22L(args.dataset_folder, 
                          bin_size=args.bin_size,
                          batch_size=args.batch_size,
+                         account_for_duration=False,
                          transforms=transformations)
     elif args.dataset == "UWF22h":
         dataset = UWF22HL(args.dataset_folder, 
