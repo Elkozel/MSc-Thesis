@@ -66,9 +66,9 @@ class UWF22L(L.LightningDataModule):
                  from_time: int = 0,
                  to_time: int = 16452990000, # Max timestamp is 1645298196.163731
                  transforms: list = [],
-                 account_for_duration: bool = True,
                  batch_split: list = [0.6, 0.25, 0.15],
-                 dataset_name: str = "UWF22"):
+                 dataset_name: str = "UWF22",
+                 account_for_duration: bool = True):
         super().__init__()
         self.data_dir = os.path.join(data_dir, dataset_name)
         self.from_time = from_time
