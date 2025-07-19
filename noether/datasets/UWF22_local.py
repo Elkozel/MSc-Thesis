@@ -67,6 +67,7 @@ class UWF22L(L.LightningDataModule):
                  to_time: int = 5552151, # Max timestamp is 1645298196.163731
                  
                  transforms: list = [],
+                 account_for_duration: bool = True,
                  batch_split: list = [0.6, 0.25, 0.15],
                  dataset_name: str = "UWF22"):
         super().__init__()
@@ -77,6 +78,7 @@ class UWF22L(L.LightningDataModule):
         self.batch_size = batch_size
         self.dataset_name = dataset_name
         self.transforms = transforms
+        self.account_for_duration = account_for_duration
         self.batch_mask = {}
         self.batch_split = batch_split
         self.ts_first_event = 1639746045.213779 # This allows us to easily make time relative
@@ -184,7 +186,11 @@ class UWF22L(L.LightningDataModule):
             data = transform(data)
         return data
     
-    def account_for_duration(self, df: pd.DataFrame):
+    def expand_duration(self, df: pd.DataFrame):
+        if not self.account_for_duration:
+            df["conn_status"] = "closing"
+            return df
+        
         def expand(x):
             duration = x["duration"]
             end_ts = x["ts"]
@@ -219,7 +225,7 @@ class UWF22L(L.LightningDataModule):
     
     def generate_bins_from_file(self, filename, keyword_map = None) -> Generator[pd.DataFrame, Any, None]:
         df = pd.read_parquet(filename)
-        df = self.account_for_duration(df)
+        df = self.expand_duration(df)
         columns = df.columns
 
         # Maps for each column are also created automatically
