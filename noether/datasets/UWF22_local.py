@@ -58,6 +58,7 @@ class UWF22L(L.LightningDataModule):
             "raw_file": "7.parquet"
         }
     ]
+    factorize_cols = ["service", "proto", "conn_state", "conn_status", "label_tactic"]
 
     def __init__(self, 
                  data_dir: str,
@@ -225,18 +226,15 @@ class UWF22L(L.LightningDataModule):
     def generate_bins_from_file(self, filename, keyword_map = None) -> Generator[pd.DataFrame, Any, None]:
         df = pd.read_parquet(filename)
         df = self.expand_duration(df)
-        columns = df.columns
 
         # Maps for each column are also created automatically
         if keyword_map is None:
-            self.keyword_map = {col: OrderedSet([]) for col in columns if col != 'ts'}
-            self.keyword_map.pop("src_ip_zeek", None)
-            self.keyword_map.pop("dest_ip_zeek", None)
+            self.keyword_map = {col: OrderedSet([]) for col in self.factorize_cols}
             self.hostmap = OrderedSet([])
-
-            self.keyword_map.pop("src_port_zeek", None)
-            self.keyword_map.pop("dest_port_zeek", None)
             self.servicemap = OrderedSet([])
+
+        # Ensure that the label mask starts with "none"
+        self.keyword_map["label_tactic"].update(["none"])
 
         # Make time relative
         df["abs_ts"] = df["ts"]
