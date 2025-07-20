@@ -489,8 +489,9 @@ class UWF22FallL(UWF22L):
                  to_time: int = 26816821, # (Relative) timestamp of last event is 26816820.542023897
                  transforms: list = [],
                  batch_split: list = [0.6, 0.25, 0.15], 
-                 dataset_name: str = "UWF22Fall"):
-        super().__init__(data_dir, bin_size, batch_size, from_time, to_time, transforms, batch_split, dataset_name)
+                 dataset_name: str = "UWF22Fall",
+                 account_for_duration: bool = True):
+        super().__init__(data_dir, bin_size, batch_size, from_time, to_time, transforms, batch_split, dataset_name, account_for_duration)
 
         self.ts_first_event = 1639746045.251239 # This allows us to easily make time relative
 
@@ -538,8 +539,9 @@ class UWF24L(UWF22L):
                  to_time: int = 21758350, # (Relative) timestamp of last event is 21758350.529811144
                  transforms: list = [],
                  batch_split: list = [0.6, 0.25, 0.15],
-                 dataset_name: str = "UWF24"):
-        super().__init__(data_dir, bin_size, batch_size, from_time, to_time, transforms, batch_split, dataset_name)
+                 dataset_name: str = "UWF24",
+                 account_for_duration: bool = True):
+        super().__init__(data_dir, bin_size, batch_size, from_time, to_time, transforms, batch_split, dataset_name, account_for_duration)
 
         self.ts_first_event = 1709092837.805641 # This allows us to easily make time relative
 
@@ -595,8 +597,9 @@ class UWF24FallL(UWF22L):
                  to_time: int = 6835980, # (Relative) timestamp of last event is 6835979.18627286
                  transforms: list = [],
                  batch_split: list = [0.6, 0.25, 0.15],
-                 dataset_name: str = "UWF24Fall"):
-        super().__init__(data_dir, bin_size, batch_size, from_time, to_time, transforms, batch_split, dataset_name)
+                 dataset_name: str = "UWF24Fall",
+                 account_for_duration: bool = True):
+        super().__init__(data_dir, bin_size, batch_size, from_time, to_time, transforms, batch_split, dataset_name, account_for_duration)
 
         self.ts_first_event = 1726952812.207993 # This allows us to easily make time relative
 
