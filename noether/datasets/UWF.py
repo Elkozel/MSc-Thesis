@@ -423,3 +423,182 @@ class GeneratorDataset(torch.utils.data.IterableDataset):
 
     def __len__(self):
         return self._length
+    
+class UWF22FallL(UWF22L):
+
+    download_data = [
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekDataFall22/parquet/2021-12-12%20-%202021-12-19/part-00000-d512890f-d1e9-49d5-a136-f87f0183cb4d-c000.snappy.parquet",
+            "raw_file": "0.parquet"
+        },
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekDataFall22/parquet/2021-12-19%20-%202021-12-26/part-00000-d28b031b-bff1-4e16-853a-9b7d896627e7-c000.snappy.parquet",
+            "raw_file": "1.parquet"
+        },
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekDataFall22/parquet/2021-12-26%20-%202022-01-02/part-00000-94d13437-ae00-4a8c-9f38-edd0196cfdee-c000.snappy.parquet",
+            "raw_file": "2.parquet"
+        },
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekDataFall22/parquet/2022-01-02%20-%202022-01-09/part-00000-745e350a-da9e-4619-bd52-8cc23bb41ad5-c000.snappy.parquet",
+            "raw_file": "3.parquet"
+        },
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekDataFall22/parquet/2022-08-28%20-%202022-09-04/part-00000-9a46dd05-4b06-4a39-a45b-5c8460b6c37b-c000.snappy.parquet",
+            "raw_file": "4.parquet"
+        },
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekDataFall22/parquet/2022-09-04%20-%202022-09-11/part-00000-ea53b0e8-d346-44e3-9a87-1f60ac35c610-c000.snappy.parquet",
+            "raw_file": "5.parquet"
+        },
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekDataFall22/parquet/2022-09-11%20-%202022-09-18/part-00000-f9afaec0-242e-41e7-906d-a42681515d75-c000.snappy.parquet",
+            "raw_file": "6.parquet"
+        },
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekDataFall22/parquet/2022-09-18%20-%202022-09-25/part-00000-9ac876be-c07d-4a18-878d-959efa26f484-c000.snappy.parquet",
+            "raw_file": "7.parquet"
+        },
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekDataFall22/parquet/2022-09-25%20-%202022-10-02/part-00000-be6d0798-554d-4c7a-9fef-d4c07aa0ce19-c000.snappy.parquet",
+            "raw_file": "8.parquet"
+        },
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekDataFall22/parquet/2022-10-02%20-%202022-10-09/part-00000-2b76f9cc-0710-45e4-9e33-98ad5808ee79-c000.snappy.parquet",
+            "raw_file": "9.parquet"
+        },
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekDataFall22/parquet/2022-10-09%20-%202022-10-16/part-00000-b2b625bc-5816-4586-b977-35f9ed4487fd-c000.snappy.parquet",
+            "raw_file": "10.parquet"
+        },
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekDataFall22/parquet/2022-10-16%20-%202022-10-23/part-00000-9aeb279c-81c6-4481-9b30-d35d4d194fea-c000.snappy.parquet",
+            "raw_file": "11.parquet"
+        },
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekDataFall22/parquet/2022-10-23%20-%202022-10-30/part-00000-23fdcfa3-9dd3-4c72-886c-e945bfcf92e1-c000.snappy.parquet",
+            "raw_file": "12.parquet"
+        }
+    ]
+
+    def __init__(self, 
+                 data_dir: str, 
+                 bin_size: int = 20, 
+                 batch_size: int = 350, 
+                 from_time: int = 0,
+                 to_time: int = 26816821, # (Relative) timestamp of last event is 26816820.542023897
+                 transforms: list = [],
+                 batch_split: list = [0.6, 0.25, 0.15], 
+                 dataset_name: str = "UWF22Fall"):
+        super().__init__(data_dir, bin_size, batch_size, from_time, to_time, transforms, batch_split, dataset_name)
+
+        self.ts_first_event = 1639746045.251239 # This allows us to easily make time relative
+
+        # Lastly, save those hyperparams
+        self.save_hyperparameters()
+
+class UWF24L(UWF22L):
+
+    download_data = [
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekData24/parquet/2024-02-25%20-%202024-03-03/part-00000-8b838a85-76eb-4896-a0b6-2fc425e828c2-c000.snappy.parquet",
+            "raw_file": "0.parquet"
+        },
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekData24/parquet/2024-03-03%20-%202024-03-10/part-00000-0955ed97-8460-41bd-872a-7375a7f0207e-c000.snappy.parquet",
+            "raw_file": "1.parquet"
+        },
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekData24/parquet/2024-03-10%20-%202024-03-17/part-00000-071774ae-97f3-4f31-9700-8bfcdf41305a-c000.snappy.parquet",
+            "raw_file": "2.parquet"
+        },
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekData24/parquet/2024-03-17%20-%202024-03-24/part-00000-5f556208-a1fc-40a1-9cc2-a4e24c76aeb3-c000.snappy.parquet",
+            "raw_file": "3.parquet"
+        },
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekData24/parquet/2024-03-24%20-%202024-03-31/part-00000-ea3a47a3-0973-4d6b-a3a2-8dd441ee7901-c000.snappy.parquet",
+            "raw_file": "4.parquet"
+        },
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekData24/parquet/2024-10-27%20-%202024-11-03/part-00000-69700ccb-c1c1-4763-beb7-cd0f1a61c268-c000.snappy.parquet",
+            "raw_file": "5.parquet"
+        },
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekData24/parquet/2024-11-03%20-%202024-11-10/part-00000-f078acc1-ab56-40a6-a6e1-99d780645c57-c000.snappy.parquet",
+            "raw_file": "6.parquet"
+        }
+    ]
+
+    def __init__(self, 
+                 data_dir: str,
+                 bin_size: int = 20,
+                 batch_size: int = 350,
+                 from_time: int = 0,
+                 to_time: int = 21758350, # (Relative) timestamp of last event is 21758350.529811144
+                 transforms: list = [],
+                 batch_split: list = [0.6, 0.25, 0.15],
+                 dataset_name: str = "UWF24"):
+        super().__init__(data_dir, bin_size, batch_size, from_time, to_time, transforms, batch_split, dataset_name)
+
+        self.ts_first_event = 1709092837.805641 # This allows us to easily make time relative
+
+        # Lastly, save those hyperparams
+        self.save_hyperparameters()
+
+class UWF24FallL(UWF22L):
+
+    download_data = [
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekDataFall24-2/parquet/2024-09-15%20-%202024-09-22/part-00000-71f94c04-0853-433f-ad56-45d80000fa4d-c000.snappy.parquet",
+            "raw_file": "0.parquet"
+        },
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekDataFall24-2/parquet/2024-09-22%20-%202024-09-29/part-00000-47ad3994-9e36-4638-90fa-9651c6c60ad3-c000.snappy.parquet",
+            "raw_file": "1.parquet"
+        },
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekDataFall24-2/parquet/2024-10-27%20-%202024-11-03/part-00000-e0469268-a9e0-458d-beec-4e95db2677fc-c000.snappy.parquet",
+            "raw_file": "2.parquet"
+        },
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekDataFall24-2/parquet/2024-11-03%20-%202024-11-10/part-00000-a67cd4d5-0aa5-4378-87f4-a61f467d855d-c000.snappy.parquet",
+            "raw_file": "3.parquet"
+        },
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekDataFall24-2/parquet/2024-11-10%20-%202024-11-17/part-00000-7f01bb0b-25b4-4353-a7c2-7418346e3cbb-c000.snappy.parquet",
+            "raw_file": "4.parquet"
+        },
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekDataFall24-2/parquet/2024-11-17%20-%202024-11-24/part-00000-5bcfc093-4a1f-4fc2-af09-14f133aa5b13-c000.snappy.parquet",
+            "raw_file": "5.parquet"
+        },
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekDataFall24-2/parquet/2024-11-24%20-%202024-12-01/part-00000-24521abf-f2eb-4cb7-b243-257846310bb6-c000.snappy.parquet",
+            "raw_file": "6.parquet"
+        },
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekDataFall24-2/parquet/2024-12-01%20-%202024-12-08/part-00000-3c25b9c9-b28c-4a19-b79a-3fadb292d329-c000.snappy.parquet",
+            "raw_file": "7.parquet"
+        },
+        {
+            "url": "https://datasets.uwf.edu/data/UWF-ZeekDataFall24-2/parquet/2024-12-08%20-%202024-12-15/part-00000-fdff949b-33b2-4ebc-b926-a59d462d7ea4-c000.snappy.parquet",
+            "raw_file": "8.parquet"
+        }
+    ]
+
+    def __init__(self, 
+                 data_dir: str,
+                 bin_size: int = 20,
+                 batch_size: int = 350,
+                 from_time: int = 0,
+                 to_time: int = 6835980, # (Relative) timestamp of last event is 6835979.18627286
+                 transforms: list = [],
+                 batch_split: list = [0.6, 0.25, 0.15],
+                 dataset_name: str = "UWF24Fall"):
+        super().__init__(data_dir, bin_size, batch_size, from_time, to_time, transforms, batch_split, dataset_name)
+
+        self.ts_first_event = 1726952812.207993 # This allows us to easily make time relative
+
+        # Lastly, save those hyperparams
+        self.save_hyperparameters()

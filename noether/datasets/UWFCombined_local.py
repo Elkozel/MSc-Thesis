@@ -17,7 +17,7 @@ from torch_geometric.data.batch import Batch
 import lightning as L
 from transforms.EnrichHost import EnrichHost
 
-from datasets.UWF22_local import UWF22L
+from noether.datasets.UWF import UWF22L
 from datasets.UWF22Fall_local import UWF22FallL
 from datasets.UWF24_local import UWF24L
 from datasets.UWF24Fall_local import UWF24FallL

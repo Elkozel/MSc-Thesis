@@ -17,11 +17,8 @@ from models.Try1 import LitFullModel as Try1
 from models.Try2 import LitFullModel as Try2
 from models.Try2H import LitFullModel as Try2H
 from models.Try3 import LitFullModel as Try3
-from datasets.UWF22_local import UWF22L
 from datasets.UWF22H_local import UWF22HL
-from datasets.UWF22Fall_local import UWF22FallL
-from datasets.UWF24_local import UWF24L
-from datasets.UWF24Fall_local import UWF24FallL
+from datasets.UWF import UWF22L, UWF22FallL, UWF24L, UWF24FallL
 from datasets.LANL_local import LANLL
 
 def parse_args():

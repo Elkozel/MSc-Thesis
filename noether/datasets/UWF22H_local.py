@@ -2,7 +2,7 @@ from typing import Any, List
 import pandas as pd
 import numpy as np
 import torch
-from datasets.UWF22_local import UWF22L
+from noether.datasets.UWF import UWF22L
 from torch_geometric.data import HeteroData
 
 from transforms.EnrichService import EnrichService
