@@ -1,4 +1,5 @@
 from datasets.UWF import UWF22L, UWF22FallL, UWF24L, UWF24FallL
+from datasets.UWF22H_local import UWF22HL
 from ordered_set import OrderedSet
 
 possible_datasets = ["UWF22", "UWF22h", "UWF22Fall", "UWF24", "UWF24Fall"]
