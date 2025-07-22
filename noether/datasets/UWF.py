@@ -291,7 +291,7 @@ class UWF22L(L.LightningDataModule):
             yield group
 
     def generate_batches(self, batch_type: int | None = None):
-        for file in self.download_data:        
+        for file in self.download_data:
             batch_num = 0
             filename = os.path.join(self.data_dir, file["raw_file"])
             batch: list[pd.DataFrame] = []
