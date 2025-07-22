@@ -19,6 +19,7 @@ from models.Try2H import LitFullModel as Try2H
 from models.Try3 import LitFullModel as Try3
 from datasets.UWF22H_local import UWF22HL
 from datasets.UWF import UWF22L, UWF22FallL, UWF24L, UWF24FallL
+from datasets.UWF_Shuffled import UWF22S
 from datasets.LANL_local import LANLL
 
 def parse_args():
@@ -28,6 +29,10 @@ def parse_args():
                         help="Model type to use", default="try1")
     parser.add_argument('--dataset', type=str, choices=["UWF22", "UWF22h", "UWF22Fall", "UWF24", "UWF24Fall", 'LANL'],
                         help="Dataset to use", default="UWF22")
+    parser.add_argument('--shuffle', action=argparse.BooleanOptionalAction,
+                        help="Whether the dataset should be shuffled", default=True)
+    
+
     parser.add_argument('--max-epochs', type=int, default=50,
                         help="Maximum number of training epochs")
     parser.add_argument('--num-devices', default="auto",
@@ -63,10 +68,14 @@ def main():
     ]
 
     if args.dataset == "UWF22":
-        dataset = UWF22L(args.dataset_folder, 
-                         bin_size=args.bin_size,
-                         batch_size=args.batch_size,
+        dataset = UWF22S(args.dataset_folder,
+                         bin_size=5,
+                         batch_size=60,
                          account_for_duration=False,
+                         shuffle=True,
+                         shuffle_every_time=True,
+                         shuffle_type="day",
+                         shuffle_bin_size=0.1,
                          transforms=transformations)
     elif args.dataset == "UWF22h":
         dataset = UWF22HL(args.dataset_folder, 
