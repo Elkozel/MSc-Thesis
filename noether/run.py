@@ -26,9 +26,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train and test a GNN model with Comet logging")
     
     parser.add_argument('--model', type=str, choices=["try0", 'try1', 'try2', 'try2h', 'try3'],
-                        help="Model type to use", default="try1")
+                        help="Model type to use", default="try2")
     parser.add_argument('--dataset', type=str, choices=["UWF22", "UWF22h", "UWF22Fall", "UWF24", "UWF24Fall", 'LANL'],
-                        help="Dataset to use", default="UWF22")
+                        help="Dataset to use", default="LANL")
     parser.add_argument('--shuffle', action=argparse.BooleanOptionalAction,
                         help="Whether the dataset should be shuffled", default=True)
     
@@ -37,10 +37,6 @@ def parse_args():
                         help="Maximum number of training epochs")
     parser.add_argument('--num-devices', default="auto",
                         help="The amount of devices used by the Trainer")
-    parser.add_argument('--bin-size', type=int, default=20,
-                        help="The size of the time bins")
-    parser.add_argument('--batch-size', type=int, default=350,
-                        help="The amount of bins to be grouped in a batch")
     parser.add_argument('--dataset-folder', type=str, default="/data/datasets",
                         help="Folder to store all datasets")
     
@@ -62,8 +58,6 @@ def main():
     check_hetero(args.model, args.dataset)
 
     transformations = [
-        # RemoveDuplicatedEdges(key=["edge_attr", "edge_weight", "time", "y"]),
-        # RemoveSelfLoops(attr=["edge_attr", "edge_weight", "time", "y"]),
         AddInOutDegree()
     ]
 
@@ -79,30 +73,34 @@ def main():
                          transforms=transformations)
     elif args.dataset == "UWF22h":
         dataset = UWF22HL(args.dataset_folder, 
-                         bin_size=args.bin_size,
-                         batch_size=args.batch_size,
+                         bin_size=20,
+                         batch_size=350,
                          transforms=transformations)
     elif args.dataset == "UWF22Fall":
         dataset = UWF22FallL(args.dataset_folder, 
-                         bin_size=args.bin_size,
-                         batch_size=args.batch_size,
+                         bin_size=20,
+                         batch_size=350,
                          transforms=transformations)
     elif args.dataset == "UWF24":
         dataset = UWF24L(args.dataset_folder, 
-                         bin_size=args.bin_size,
-                         batch_size=args.batch_size,
+                         bin_size=20,
+                         batch_size=350,
                          transforms=transformations)
     elif args.dataset == "UWF24Fall":
         dataset = UWF24FallL(args.dataset_folder, 
-                         bin_size=args.bin_size,
-                         batch_size=args.batch_size,
+                         bin_size=20,
+                         batch_size=350,
                          transforms=transformations)
     elif args.dataset == "LANL":
+        transformations = [
+            RemoveDuplicatedEdges(key=["edge_attr", "edge_weight", "time", "y"]),
+            RemoveSelfLoops(attr=["edge_attr", "edge_weight", "time", "y"]),
+            AddInOutDegree()
+        ]
         dataset = LANLL(
             args.dataset_folder,
-            bin_size=args.bin_size,
-            batch_size=args.batch_size,
-            lanl_URL="https://csr.lanl.gov/data-fence/1750885650/Eao2ITLSwQl4pLAxzgE-vjOVk9Q=/cyber1/", 
+            bin_size=20,
+            batch_size=100,
             transforms=transformations)
     else:
         raise NotImplementedError(f"Dataset {args.dataset} is not implemented")
