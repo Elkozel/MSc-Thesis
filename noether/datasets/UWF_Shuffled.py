@@ -61,6 +61,7 @@ class UWF22S(UWF22L):
 
         # Split the dataframe into parts
         num_parts = len(self.download_data)
+        df = df.sort_values("ts")
         parts = np.array_split(df, num_parts)
 
         os.makedirs(self.shuffled_dataset_dir, exist_ok=True)

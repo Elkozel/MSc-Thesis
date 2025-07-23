@@ -276,6 +276,7 @@ class UWF22L(L.LightningDataModule):
 
         # Bin the data
         df['bin'] = (df['ts'] // self.bin_size) * self.bin_size
+        df = df.sort_values(["bin", "ts"])
         grouped = list(df.groupby('bin'))
 
         previous_start = float(df["bin"].min())
