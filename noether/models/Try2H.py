@@ -27,7 +27,87 @@ class GNNEncoder(nn.Module):
         
         self.dropout = dropout_rate
 
-    def forward(self, x, edge_index, node_type, edge_type, edge_features):
+    
+    def transform_hetero_data(self, data: HeteroData):
+        # ========================
+        #         Nodes          
+        # ========================
+        
+        # Extract node features from the input data dictionary
+        x_dict = data.x_dict
+        
+        # Determine the maximum number of features (columns) across all node types
+        max_node_cols = max([t.size(1) for t in x_dict.values()])
+        
+        # Initialize lists to store node features and node types
+        x = []
+        node_type = []
+
+        # Loop through each node type and pad the features to match the max_node_cols
+        for type, t in enumerate(x_dict.values()):
+            # Calculate padding width required for each node type to match max_node_cols
+            pad_width = max_node_cols - t.size(1)
+            
+            # Pad node features with zeros (constant padding) to ensure all have the same column size
+            t = F.pad(t, (0, pad_width), mode='constant', value=0.0)
+            
+            # Append padded node features to the x list
+            x.append(t)
+            
+            # Create a tensor to denote the node type for each node in the current batch
+            node_type.append(torch.full((t.size(0),), type))
+
+        # Concatenate all node features into a single tensor
+        node_type = torch.cat(node_type)
+        x = torch.cat(x)
+
+        # ========================
+        #     Edge Attributes     
+        # ========================
+        
+        # Extract edge attributes from the input data dictionary
+        edge_attr_dict = data.edge_attr_dict
+        
+        # Determine the maximum number of edge features (columns) across all edge types
+        max_edge_cols = max([t.size(1) for t in edge_attr_dict.values()])
+
+        # Initialize lists to store edge attributes and edge types
+        edge_attr = []
+        edge_type = []
+
+        # Loop through each edge type and pad the features to match the max_edge_cols
+        for type, t in enumerate(edge_attr_dict.values()):
+            # Calculate padding width required for each edge type to match max_edge_cols
+            pad_width = max_edge_cols - t.size(1)
+            
+            # Pad edge features with zeros (constant padding) to ensure all have the same column size
+            t = F.pad(t, (0, pad_width), mode='constant', value=0.0)
+            
+            # Append padded edge features to the edge_attr list
+            edge_attr.append(t)
+            
+            # Create a tensor to denote the edge type for each edge in the current batch
+            edge_type.append(torch.full((t.size(0),), type))
+
+        # Concatenate all edge attributes into a single tensor
+        edge_attr = torch.cat(edge_attr)
+        edge_type = torch.cat(edge_type)
+
+        # ========================
+        #         Edges          
+        # ========================
+        
+        # Extract edge indices from the input data dictionary
+        edge_dict = data.edge_index_dict
+        
+        # Concatenate all edge indices (from different edge types) into a single tensor
+        edge_index = torch.cat(list(edge_dict.values()), dim=1)
+        
+        # Return the final processed data: node features, edge indices, node types, edge types, and edge attributes
+        return x, edge_index, node_type, edge_type, edge_attr
+
+    def forward(self, data):
+        x, edge_index, node_type, edge_type, edge_features = self.transform_hetero_data(data)
 
         # x: Tensor, edge_index: Union[Tensor, SparseTensor], node_type: Tensor, edge_type: Tensor, edge_attr: Optional[Tensor] = None
         out = self.conv1(x, edge_index, node_type, edge_type, edge_features)
@@ -146,7 +226,7 @@ class LitFullModel(L.LightningModule):
         if isinstance(graph_sequence, torch.Tensor):
             graph_features = graph_sequence
         else:
-            graph_features = [self.gnn(*self.transform_hetero_data(data)) for data in graph_sequence]
+            graph_features = [self.gnn(data) for data in graph_sequence]
             graph_features = torch.stack(graph_features)
 
         # Switch the order, so that each node is treated as a batch
@@ -166,102 +246,18 @@ class LitFullModel(L.LightningModule):
 
         return link_pred_scores, link_class_logits
     
-    def transform_hetero_data(self, data: HeteroData):
-        # ========================
-        #         Nodes          
-        # ========================
-        
-        # Extract node features from the input data dictionary
-        x_dict = data.x_dict
-        
-        # Determine the maximum number of features (columns) across all node types
-        max_node_cols = max([t.size(1) for t in x_dict.values()])
-        
-        # Initialize lists to store node features and node types
-        x = []
-        node_type = []
-
-        # Loop through each node type and pad the features to match the max_node_cols
-        for type, t in enumerate(x_dict.values()):
-            # Calculate padding width required for each node type to match max_node_cols
-            pad_width = max_node_cols - t.size(1)
-            
-            # Pad node features with zeros (constant padding) to ensure all have the same column size
-            t = F.pad(t, (0, pad_width), mode='constant', value=0.0)
-            
-            # Append padded node features to the x list
-            x.append(t)
-            
-            # Create a tensor to denote the node type for each node in the current batch
-            node_type.append(torch.full((t.size(0),), type))
-
-        # Concatenate all node features into a single tensor
-        node_type = torch.cat(node_type)
-        x = torch.cat(x)
-
-        # ========================
-        #     Edge Attributes     
-        # ========================
-        
-        # Extract edge attributes from the input data dictionary
-        edge_attr_dict = data.edge_attr_dict
-        
-        # Determine the maximum number of edge features (columns) across all edge types
-        max_edge_cols = max([t.size(1) for t in edge_attr_dict.values()])
-
-        # Initialize lists to store edge attributes and edge types
-        edge_attr = []
-        edge_type = []
-
-        # Loop through each edge type and pad the features to match the max_edge_cols
-        for type, t in enumerate(edge_attr_dict.values()):
-            # Calculate padding width required for each edge type to match max_edge_cols
-            pad_width = max_edge_cols - t.size(1)
-            
-            # Pad edge features with zeros (constant padding) to ensure all have the same column size
-            t = F.pad(t, (0, pad_width), mode='constant', value=0.0)
-            
-            # Append padded edge features to the edge_attr list
-            edge_attr.append(t)
-            
-            # Create a tensor to denote the edge type for each edge in the current batch
-            edge_type.append(torch.full((t.size(0),), type))
-
-        # Concatenate all edge attributes into a single tensor
-        edge_attr = torch.cat(edge_attr)
-        edge_type = torch.cat(edge_type)
-
-        # ========================
-        #         Edges          
-        # ========================
-        
-        # Extract edge indices from the input data dictionary
-        edge_dict = data.edge_index_dict
-        
-        # Concatenate all edge indices (from different edge types) into a single tensor
-        edge_index = torch.cat(list(edge_dict.values()), dim=1)
-
-        # ========================
-        #            Y          
-        # ========================
-        edge_labels = torch.cat([store.y for store in data.edge_stores])
-        
-        # Return the final processed data: node features, edge indices, node types, edge types, and edge attributes
-        return x, edge_index, node_type, edge_type, edge_attr
-
-    
     def run_trough_batch(self, batch: Batch, num_windows: int, step: Literal['train', 'validation', 'test']):
         total_loss = torch.tensor(0.0).to(self.device)
         total_pred_acc = torch.tensor(0.0).to(self.device)
         total_class_acc = torch.tensor(0.0).to(self.device)
-        features = [self.gnn(*self.transform_hetero_data(data)) for data in batch.to_data_list()] # type: ignore
+        features = [self.gnn(data) for data in batch.to_data_list()] # type: ignore
         features = torch.stack(features)
             
         for i in range(num_windows):
             to_idx = i + self.rnn_window_size
             x_features = features[i:to_idx]
-            y_nodes, y_edge_index, _, _, _ = self.transform_hetero_data(batch.get_example(to_idx)) # type: ignore
-            y_labels = edge_labels = torch.cat([store.y for store in batch.get_example(to_idx).edge_stores])
+            y_nodes, y_edge_index, _, _, _ = self.gnn.transform_hetero_data(batch.get_example(to_idx)) # type: ignore
+            y_labels = torch.cat([store.y for store in batch.get_example(to_idx).edge_stores])
 
             # Positive and negative edge sampling
             positive_edges = y_edge_index

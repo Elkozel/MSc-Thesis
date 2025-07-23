@@ -72,6 +72,7 @@ def main():
                          shuffle_bin_size=0.1,
                          transforms=transformations)
     elif args.dataset == "UWF22h":
+        transformations = []
         dataset = UWF22HL(args.dataset_folder, 
                          bin_size=20,
                          batch_size=350,
