@@ -232,19 +232,20 @@ class LitFullModel(L.LightningModule):
 
         # Calculate loss
         pred_loss = F.binary_cross_entropy_with_logits(link_pred, edge_pred_labels.float())
+        class_loss = F.cross_entropy(link_class, edge_class_labels.long())
 
         # Classification False positives
-        malicious_event_mask = (edge_class_labels > 0.5)
-        malicious_event_count = malicious_event_mask.count_nonzero()
+        # malicious_event_mask = (edge_class_labels > 0.5)
+        # malicious_event_count = malicious_event_mask.count_nonzero()
 
-        false_positve_weight = 1
-        false_negative_weight = 3
+        # false_positve_weight = 1
+        # false_negative_weight = 3
 
-        false_negative_loss = F.cross_entropy(link_class[malicious_event_mask], edge_class_labels[malicious_event_mask].long()) if malicious_event_count > 0 else 0
-        false_positive_loss = F.cross_entropy(link_class[malicious_event_mask == False], edge_class_labels[malicious_event_mask == False].long())
+        # false_negative_loss = F.cross_entropy(link_class[malicious_event_mask], edge_class_labels[malicious_event_mask].long()) if malicious_event_count > 0 else 0
+        # false_positive_loss = F.cross_entropy(link_class[malicious_event_mask == False], edge_class_labels[malicious_event_mask == False].long())
 
-        class_loss = false_positive_loss * false_positve_weight + false_negative_loss * false_negative_weight
-        loss = pred_loss + self.pred_alpha * class_loss
+        # class_loss = false_positive_loss * false_positve_weight + false_negative_loss * false_negative_weight
+        loss = class_loss
 
 
         # Metrics from link prediction
