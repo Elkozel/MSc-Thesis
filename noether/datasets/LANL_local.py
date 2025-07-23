@@ -46,9 +46,9 @@ class LANLL(L.LightningDataModule):
         self.save_hyperparameters()
 
         self.auth_file = {}
-        self.auth_file["file"] = os.path.join(data_dir, "auth.txt.gz")
+        self.auth_file["file"] = os.path.join(self.data_dir, "auth.txt.gz")
         self.redteam_file = {}
-        self.redteam_file["file"] = os.path.join(data_dir, "redteam.txt.gz")
+        self.redteam_file["file"] = os.path.join(self.data_dir, "redteam.txt.gz")
         
         if lanl_URL is not None:
             self.auth_file["url"] =  os.path.join(lanl_URL, "auth.txt.gz")
