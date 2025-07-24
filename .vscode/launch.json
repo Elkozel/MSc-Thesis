@@ -18,7 +18,7 @@
             "request": "launch",
             "program": "${workspaceFolder}/noether/run.py",
             "console": "integratedTerminal",
-            "args": "--model try2h --dataset UFW22h"
+            "args": "--model try2h --dataset UWF22h"
         }
     ]
 }
