@@ -71,6 +71,9 @@ maps.bson
 
 # Dataset stats
 data_stats/
+*.svg
+*.png
+*.pdf
 
 # Comet
 .comet.config
