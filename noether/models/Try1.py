@@ -340,9 +340,11 @@ class LitFullModel(L.LightningModule):
             return torch.tensor(0.0, requires_grad=True)
         
         # Logging
-        for metric, value in results.items():
-            self.log(f"{step}_{metric}", value, batch_size=batch.num_graphs, sync_dist=True)
-
+        self.logger.log_metrics({ # type: ignore
+            f"{step}_{metric}": value 
+            for metric, value in results.items()
+        })
+        
         return results["loss"]
     
     def validation_step(self, batch: Batch, batch_idx):
@@ -361,9 +363,11 @@ class LitFullModel(L.LightningModule):
             return torch.tensor(0.0, requires_grad=True)
         
         # Logging
-        for metric, value in results.items():
-            self.log(f"{step}_{metric}", value, batch_size=batch.num_graphs, sync_dist=True)
-
+        self.logger.log_metrics({ # type: ignore
+            f"{step}_{metric}": value 
+            for metric, value in results.items()
+        })
+        
         return results["loss"]
     
     def test_step(self, batch: Batch, batch_idx):
@@ -382,9 +386,11 @@ class LitFullModel(L.LightningModule):
             return torch.tensor(0.0, requires_grad=True)
         
         # Logging
-        for metric, value in results.items():
-            self.log(f"{step}_{metric}", value, batch_size=batch.num_graphs, sync_dist=True)
-
+        self.logger.log_metrics({ # type: ignore
+            f"{step}_{metric}": value 
+            for metric, value in results.items()
+        })
+        
         return results["loss"]
 
 
