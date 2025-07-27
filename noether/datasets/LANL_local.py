@@ -274,7 +274,7 @@ class LANLL(L.LightningDataModule):
             how='left',
             validate='many_to_one',
             indicator='source_match'
-        ).reset_index(drop=True)
+        )[["source_match"]].reset_index(drop=True)
 
         # Then, do a merge on destination_user
         merge_dest = pd.merge(
@@ -285,7 +285,7 @@ class LANLL(L.LightningDataModule):
             how='left',
             validate='many_to_one',
             indicator='dest_match'
-        ).reset_index(drop=True)
+        )[["dest_match"]].reset_index(drop=True)
 
         # Add flags
         merge_source['source_malicious'] = merge_source['source_match'] == 'both'
