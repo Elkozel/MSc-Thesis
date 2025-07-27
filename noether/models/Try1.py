@@ -183,7 +183,7 @@ class LitFullModel(L.LightningModule):
         rnn_batch = torch.stack([
             torch.stack([graph_list[t + i].x for i in range(self.rnn_window_size)])  # shape [window_size, Node, Feature]
             for t in range(num_windows)
-        ])  # Final shape: [num_windows, window_size, Nnode, Feature]
+        ])  # Final shape: [num_windows, window_size, Node, Feature]
         
         # Permute to [num_windows, num_nodes, window_size, features]
         rnn_batch = rnn_batch.permute(0, 2, 1, 3)  # [Batch, Node, Window, Feature]
