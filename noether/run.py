@@ -31,7 +31,8 @@ def parse_args():
                         help="Dataset to use", default="LANL")
     parser.add_argument('--shuffle', action=argparse.BooleanOptionalAction,
                         help="Whether the dataset should be shuffled", default=True)
-    
+    parser.add_argument('--shuffle-type', type=str, choices=["day", "random"],
+                        help="The type of shuffling to be applied", default="day")
 
     parser.add_argument('--max-epochs', type=int, default=50,
                         help="Maximum number of training epochs")
@@ -65,10 +66,10 @@ def main():
         dataset = UWF22S(args.dataset_folder,
                          bin_size=5,
                          batch_size=60,
-                         account_for_duration=False,
-                         shuffle=True,
+                         account_for_duration=True,
+                         shuffle=args.shuffle,
                          shuffle_every_time=True,
-                         shuffle_type="day",
+                         shuffle_type=args.shuffle_type,
                          shuffle_bin_size=0.1,
                          transforms=transformations)
     elif args.dataset == "UWF22h":
