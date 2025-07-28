@@ -101,34 +101,34 @@ class LitFullModel(L.LightningModule):
         self.link_pred = MLPDecoder(hidden_channels, 1)
         self.link_classifier = LinkTypeClassifier(hidden_channels, out_classes)
 
-        self.link_pred_metrics = {
+        self.link_pred_metrics = nn.ModuleDict({
             "pred_acc": torchmetrics.Accuracy(task="binary", threshold=binary_threshold),
             "pred_auc": torchmetrics.AUROC(task="binary"),
             "pred_f1": torchmetrics.F1Score(task="binary"),
             "pred_ap": torchmetrics.AveragePrecision(task="binary")
-        }
+        })
 
-        self.link_class_metrics = {
+        self.link_class_metrics = nn.ModuleDict({
             "class_acc": torchmetrics.Accuracy(task="multiclass", num_classes=out_classes),
             "class_auc": torchmetrics.AUROC(task="multiclass", num_classes=out_classes),
             "class_f1": torchmetrics.F1Score(task="multiclass", num_classes=out_classes),
             "class_ap": torchmetrics.AveragePrecision(task="multiclass", num_classes=out_classes)
-        }
+        })
 
-        self.mal_metrics = {
+        self.mal_metrics = nn.ModuleDict({
             "mal_acc": torchmetrics.Accuracy(task="binary", threshold=binary_threshold),
             "mal_auc": torchmetrics.AUROC(task="binary"),
             "mal_f1": torchmetrics.F1Score(task="binary"),
             "mal_ap": torchmetrics.AveragePrecision(task="binary"),
-        }
+        })
         self.mal_stat_scores = torchmetrics.StatScores(task="binary")
 
-        self.mal_only_metrics = {
+        self.mal_only_metrics = nn.ModuleDict({
             "mal_only_acc": torchmetrics.Accuracy(task="multiclass", num_classes=out_classes),
             "mal_only_auc": torchmetrics.AUROC(task="multiclass", num_classes=out_classes),
             "mal_only_f1": torchmetrics.F1Score(task="multiclass", num_classes=out_classes),
-            "mal_only_ap": torchmetrics.AveragePrecision(task="multiclass", num_classes=out_classes),
-        }
+            "mal_only_ap": torchmetrics.AveragePrecision(task="multiclass", num_classes=out_classes)
+        })
 
         self.rnn_window_size = rnn_window_size
         self.model_name = model_name
@@ -217,10 +217,10 @@ class LitFullModel(L.LightningModule):
         edge_pred_labels = torch.cat([
             torch.ones(positive_edges.size(1)),
             torch.zeros(negative_edges.size(1))
-        ])
+        ]).to(self.device)
         edge_class_labels = torch.cat([
             data.y[edge_batch >= self.rnn_window_size],
-            torch.zeros(negative_edges.size(1))
+            torch.zeros(negative_edges.size(1)).to(self.device)
         ])
 
         # Run the full decoding with the batch
@@ -311,6 +311,7 @@ class LitFullModel(L.LightningModule):
 
         tp, fp, tn, fn, sup = self.mal_stat_scores((torch.argmax(link_class, dim=1) > 0.5).float(), malicious_event_mask)
         self.mal_stat_scores.reset()
+
         return {
             "loss": loss,
             "mal_count": data.y.count_nonzero(),
