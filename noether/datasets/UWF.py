@@ -140,7 +140,8 @@ class UWF22L(L.LightningDataModule):
         self.download_all_files()
 
     def generate_split_file(self, filename: str):
-        df = pd.read_parquet(os.path.join(self.data_dir, filename), columns=['ts'])
+        df = pd.read_parquet(os.path.join(self.data_dir, filename), columns=["ts", "duration"])
+        df = self.expand_duration(df)
 
         # Make time relative
         df["ts"] = df["ts"] - self.ts_first_event
@@ -153,7 +154,7 @@ class UWF22L(L.LightningDataModule):
 
         # Calculate bins
         from_time = math.floor(df["ts"].min())
-        to_time = math.floor(df["ts"].max())
+        to_time = math.ceil(df["ts"].max())
 
         # Randomly split the indices into training (60%), validation (25%), and test (15%) sets
         generator = torch.Generator().manual_seed(42)
