@@ -9,6 +9,7 @@ import torch
 import numpy as np
 from tqdm.auto import tqdm
 import pandas as pd
+import polars as pl
 from ordered_set import OrderedSet
 from torch.utils.data import DataLoader
 from torch.utils.data import random_split, TensorDataset
@@ -141,26 +142,30 @@ class UWF22(L.LightningDataModule):
         # Download files if nesessary
         self.download_all_files()
 
-    def generate_split_file(self, df: pd.DataFrame):
+    def generate_split_file(self, df: pl.DataFrame):
         df = self.expand_duration(df)
 
         # Make time relative
-        df["ts"] = df["ts"] - self.ts_first_event
+        df = df.with_columns(
+            ts = pl.col("ts") - self.ts_first_event
+        )
         
         # Filter only the timestamps we care about
-        df = df[(df["ts"] >= self.from_time) & (df["ts"] < self.to_time)]
-        if df.empty:
+        collected_df = df.filter(
+            (pl.col("ts") >= self.from_time) & (pl.col("ts") < self.to_time)
+        )
+        if collected_df.is_empty():
             return torch.empty(0)
 
         # Calculate bins
-        from_bin = df["ts"].min() // self.bin_size
-        to_bin = df["ts"].max() // self.bin_size
+        from_bin = collected_df.select(pl.min("ts")).item() // self.bin_size
+        to_bin = collected_df.select(pl.max("ts")).item() // self.bin_size
         from_batch = from_bin // self.batch_size
         to_batch = to_bin // self.batch_size
 
         # Randomly split the indices into training (60%), validation (25%), and test (15%) sets
         generator = torch.Generator().manual_seed(42)
-        num_batches = int(to_batch - from_batch + 1)
+        num_batches = to_batch - from_batch + 1
 
         # Create full batch index tensor for this file
         full_idx = torch.arange(num_batches)
@@ -178,7 +183,7 @@ class UWF22(L.LightningDataModule):
     def setup(self, stage: str):
         for file in self.download_data:
             filename = file["raw_file"]
-            df = pd.read_parquet(os.path.join(self.data_dir, filename), columns=["ts", "duration"])
+            df = pl.read_parquet(os.path.join(self.data_dir, filename))
 
             # Generate the batch masks
             batch_mask = self.generate_split_file(df)
@@ -189,47 +194,44 @@ class UWF22(L.LightningDataModule):
             data = transform(data)
         return data
     
-    def expand_duration(self, df: pd.DataFrame):
+    def expand_duration(self, df: pl.DataFrame):
         if not self.account_for_duration:
-            df["conn_status"] = "closing"
+            df = df.with_columns(
+                conn_status = 2
+            )
             return df
-        
-        def expand(x):
-            duration = x["duration"]
-            end_ts = x["ts"]
-            start_ts = float(end_ts - duration)
-            
-            # Otherwise, determine how many adjustments will need to be made
-            all_ts = np.arange(start_ts, end_ts, self.bin_size)[:-1] # cut the last one (we already have the original event)
-            all_ts = np.append(all_ts, end_ts) # add the original event
 
-            open_conn_states = ["open" for _ in range(all_ts.size - 2)]
-            all_conn_states = ["started"] + open_conn_states + ["closing"]
+        df = df.with_columns(
+            pl.when(pl.col("duration").is_not_null())
+                .then(pl.int_ranges(
+                    pl.col("ts") - pl.col("duration"), # start ts (when the connection was started)
+                    pl.col("ts"), # the second to last ts (the last one is the real event)
+                    self.bin_size, eager=True).tail(-1)).alias("ts")
+        )
+        df = df.with_columns(
+            pl.when(pl.col("duration").is_not_nan())
+                .then([0] + pl.repeat(1, pl.col("ts").list.len() - 1).append(2))
+                .otherwise([2]).alias("conn_status")
+        )
 
-            return pd.Series([all_ts, all_conn_states], index=['ts', 'conn_status'])
-        
-        df["conn_status"] = "closing"
-        df["ts"] = df["ts"].astype("object")
-        mask = (df["duration"] > self.bin_size)
-        df.loc[mask, ["ts", "conn_status"]] = df[mask].apply(expand, axis=1)
         df = df.explode(["ts", "conn_status"])
 
         # Recast to a float
-        df["ts"] = df["ts"].astype("float")
-
-        # Remove events with negative ts
-        df = df[df["ts"] >= 0.0]
-
-        # Sort by time
-        df = df.sort_values(by=['ts'])  # Sort records chronologically
-        df = df.reset_index(drop=True)  # Reset index after sorting
+        df = df.with_columns(
+            pl.col("ts").cast(pl.Float32).alias("ts")
+        ).filter(
+            pl.col("ts") >= 0.0
+        ).sort("ts")
 
         return df
     
-    def bin_df(self, df: pd.DataFrame, keyword_map = None) -> pd.DataFrame:
+    def bin_df(self, df: pl.LazyFrame, keyword_map = None) -> pl.LazyFrame:
         df = self.expand_duration(df)
 
         # Maps for each column are also created automatically
+        df.with_columns(
+            pl.col([])
+        )
         if keyword_map is None:
             self.keyword_map = {col: OrderedSet([]) for col in self.factorize_cols}
             self.hostmap = OrderedSet([])
@@ -239,24 +241,33 @@ class UWF22(L.LightningDataModule):
         self.keyword_map["label_tactic"].update(["none"])
 
         # Make time relative
-        df["abs_ts"] = df["ts"]
-        df["ts"] = df["ts"] - self.ts_first_event
+        df = df.with_columns(
+            abs_ts = pl.col("ts"),
+            ts = pl.col("ts") - self.ts_first_event
+        )
 
         # Ensure 'time' is numeric
-        df['ts'] = pd.to_numeric(df['ts'], errors='coerce')
-        df.dropna(subset=['ts'], inplace=True)
-        df.sort_values(by='ts', inplace=True)
+        df = df.with_columns(
+            pl.col("ts").cast(pl.Float64).drop_nans()
+        ).sort("ts")
 
         # Find only data between the time given
-        df = df[(df["ts"] >= self.from_time) & (df["ts"] < self.to_time)]
-        if df.empty:
-            return pd.DataFrame([], columns=df.columns, dtype="int64")
+        df = df.filter(
+            (pl.col("ts") >= self.from_time) & (pl.col("ts") < self.to_time)
+        )
+        collected_df = df.collect()
+        if collected_df.is_empty():
+            return pl.LazyFrame([])
 
         # Update keyword map
         for col in self.keyword_map:
-            self.keyword_map[col].update(df[col].fillna("None").unique()) # type: ignore
-        self.hostmap.update(df["src_ip_zeek"].fillna("None").unique()) # type: ignore
-        self.hostmap.update(df["dest_ip_zeek"].fillna("None").unique()) # type: ignore
+            self.keyword_map[col].update(collected_df.select(col).fillna("None").unique()) # type: ignore
+        self.hostmap.update(collected_df.select("src_ip_zeek").fill_nan("None").unique()) # type: ignore
+        self.hostmap.update(collected_df.select("dest_ip_zeek").fill_nan("None").unique()) # type: ignore
+        self.servicemap.update(collected_df.select(
+            pl.concat_list("src_ip_zeek", "src_port_zeek").unique()
+        ).map_rows(lambda x: (x[0], x[1])))
+        collected_df.select(["src_ip_zeek", "src_port_zeek"]).unique().map_rows(lambda x: (x[0], x.iloc[1]))
         self.servicemap.update(df[["src_ip_zeek", "src_port_zeek"]]
                                .drop_duplicates()
                                .reset_index(drop=True)
@@ -315,23 +326,23 @@ class UWF22(L.LightningDataModule):
                 corrected_batch = self.fill_in_gaps_in_batch(bins, batch*self.batch_size, df.columns)
                 yield corrected_batch, int(batch_mask[int(batch)]) # type: ignore
 
-    def df_to_data(self, df: pd.DataFrame):
-        hostmap_df = pd.DataFrame([
+    def df_to_data(self, df: pl.DataFrame):
+        hostmap_df = pl.DataFrame([
             EnrichHost.enrich_host(host, id) for id, host in enumerate(self.hostmap)
         ])
 
         data = Data()
-        data.time = torch.from_numpy(df["ts"].to_numpy(dtype=float)).to(dtype=torch.float64)
-        data.x = torch.from_numpy(hostmap_df[[
+        data.time = df.select("ts").to_torch(dtype=pl.Float64)
+        data.x = hostmap_df.select([
                 "internal",
                 "broadcast",
                 "multicast",
                 "ipv4",
                 "ipv6",
                 "valid",
-        ]].to_numpy()).to(torch.float32)
-        data.edge_index = torch.from_numpy(df[["src_ip_id", "dest_ip_id"]].to_numpy().T).to(torch.int64)
-        data.edge_attr = torch.nan_to_num(torch.from_numpy(df[[
+        ]).to_torch(dtype=pl.Float64)
+        data.edge_index = df.select(["src_ip_id", "dest_ip_id"]).transpose().to_torch(dtype=pl.Int64)
+        data.edge_attr = df.select([
                 "conn_status",
                 "src_port_zeek",
                 "dest_port_zeek",
@@ -348,13 +359,13 @@ class UWF22(L.LightningDataModule):
                 "conn_state"
                 # TODO: Add info about the port
                 # TODO: Add history
-        ]].astype(float).to_numpy()).to(torch.float32))
-        data.history = df[[
+        ]).fill_nan(0).to_torch(dtype=pl.Float64)
+        data.history = df.select([
                 "history"
                 # TODO: Add info about the port
                 # TODO: Add history
-        ]].to_numpy()
-        data.y = torch.from_numpy(df["label_tactic"].to_numpy()).to(torch.int64)
+        ]).to_numpy()
+        data.y = df.select("label_tactic").to_torch(dtype=pl.Int64)
 
         return data
 

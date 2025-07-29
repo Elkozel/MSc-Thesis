@@ -1,5 +1,6 @@
 tqdm
 pandas
+polars
 Elasticsearch==8.17
 pymongo
 pyarrow
