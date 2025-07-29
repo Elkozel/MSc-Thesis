@@ -347,7 +347,7 @@ class LitFullModel(L.LightningModule):
         })
 
         # Log for early stopping
-        self.log(f"{step}_loss", results["loss"])
+        self.log(f"{step}_loss", results["loss"], batch_size=batch.num_graphs)
         
         return results["loss"]
     
@@ -373,7 +373,7 @@ class LitFullModel(L.LightningModule):
         })
 
         # Log for early stopping
-        self.log(f"{step}_loss", results["loss"])
+        self.log(f"{step}_loss", results["loss"], batch_size=batch.num_graphs)
         
         return results["loss"]
     
@@ -399,7 +399,7 @@ class LitFullModel(L.LightningModule):
         })
 
         # Log for early stopping
-        self.log(f"{step}_loss", results["loss"])
+        self.log(f"{step}_loss", results["loss"], batch_size=batch.num_graphs)
         
         return results["loss"]
 
