@@ -314,13 +314,13 @@ class LitFullModel(L.LightningModule):
 
         return {
             "loss": loss,
-            "mal_count": data.y.count_nonzero(),
+            "mal_count": data.y.count_nonzero().float(),
             "benign_count": data.y.size(0) - int(data.y.count_nonzero()),
-            "true_positives": tp,
-            "false_positives": fp,
-            "true_negatives": tn,
-            "false_negatives": fn,
-            "support": sup,
+            "true_positives": tp.float(),
+            "false_positives": fp.float(),
+            "true_negatives": tn.float(),
+            "false_negatives": fn.float(),
+            "support": sup.float(),
             "edge_count": positive_edges.size(1),
             **matric_results
         }
@@ -341,13 +341,10 @@ class LitFullModel(L.LightningModule):
             return torch.tensor(0.0, requires_grad=True)
         
         # Logging
-        self.logger.log_metrics({ # type: ignore
+        self.log_dict({
             f"{step}_{metric}": value 
             for metric, value in results.items()
-        })
-
-        # Log for early stopping
-        self.log(f"{step}_loss", results["loss"], batch_size=batch.num_graphs)
+        }, logger=True, batch_size=batch.num_graphs, sync_dist=True)
         
         return results["loss"]
     
@@ -367,13 +364,10 @@ class LitFullModel(L.LightningModule):
             return torch.tensor(0.0, requires_grad=True)
         
         # Logging
-        self.logger.log_metrics({ # type: ignore
+        self.log_dict({
             f"{step}_{metric}": value 
             for metric, value in results.items()
-        })
-
-        # Log for early stopping
-        self.log(f"{step}_loss", results["loss"], batch_size=batch.num_graphs)
+        }, logger=True, batch_size=batch.num_graphs, sync_dist=True)
         
         return results["loss"]
     
@@ -393,13 +387,10 @@ class LitFullModel(L.LightningModule):
             return torch.tensor(0.0, requires_grad=True)
         
         # Logging
-        self.logger.log_metrics({ # type: ignore
+        self.log_dict({
             f"{step}_{metric}": value 
             for metric, value in results.items()
-        })
-
-        # Log for early stopping
-        self.log(f"{step}_loss", results["loss"], batch_size=batch.num_graphs)
+        }, logger=True, batch_size=batch.num_graphs, sync_dist=True)
         
         return results["loss"]
 
