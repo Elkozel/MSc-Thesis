@@ -23,6 +23,13 @@ from transforms.EnrichHost import EnrichHost
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+service_enum = pl.Enum(['dce_rpc,ntlm,smb,gssapi', 'dce_rpc', 'dce_rpc,smb,gssapi,ntlm', 'gssapi', 'smb,gssapi,ntlm', 'gssapi,dce_rpc,smb,ntlm', 'ssl', 'ntlm,gssapi,dce_rpc,smb', 'dhcp', 'smb', 'dns', "None", 'smb,dce_rpc,ntlm,gssapi', 'ntlm,smb,gssapi', 'ntp', 'ssh', 'gssapi,smb,ntlm', 'gssapi,smb', 'smb,gssapi', 'radius', 'ntlm,dce_rpc,gssapi,smb', 'krb_tcp', 'gssapi,dce_rpc,ntlm,smb', 'gssapi,smb,ntlm,dce_rpc', 'gssapi,smb,dce_rpc,ntlm', 'ftp', 'snmp', 'smb,ntlm,gssapi', 'ntlm,dce_rpc,smb,gssapi', 'ntlm,gssapi,smb', 'gssapi,ntlm,smb', 'http'])
+proto_enum = pl.Enum(['icmp', 'udp', 'tcp'])
+conn_state_enum = pl.Enum(['RSTO', 'S1', 'RSTRH', 'RSTR', 'SHR', 'S3', 'OTH', 'SH', 'S2', 'REJ', 'S0', 'SF'])
+conn_status_enum = pl.Enum(['starting', 'open', 'closing'])
+label_tactic_enum = pl.Enum(['none', 'Privilege Escalation', 'Collection', 'Initial Access', 'Credential Access', 'Resource Development', 'Lateral Movement', 'Command and Control', 'Execution', 'Defense Evasion', 'Persistence', 'Discovery', 'Exfiltration', 'Reconnaissance'])
+
+
 class UWF22(L.LightningDataModule):
 
     download_data = [
@@ -201,26 +208,31 @@ class UWF22(L.LightningDataModule):
             )
             return df
         
-        df = df.with_columns(start_ts = pl.col("ts") - pl.col("duration"))
+        df = df.with_columns(
+            start_ts = pl.when(pl.col("duration").is_not_null())
+                .then(pl.col("ts") - pl.col("duration")),
+            start_conn_status = pl.when(pl.col("duration").is_not_null())
+                .then(pl.lit("starting"))
+            )
 
         # Handle times
         df = df.with_columns(
-            ts_list=pl.int_ranges("start_ts", "ts", self.bin_size)
-                       .list.eval(pl.element().cast(pl.Float64, strict=False)))
+            ts_list = pl.int_ranges(pl.col("start_ts") + self.bin_size, pl.col("ts") - self.bin_size, self.bin_size)
+                .list.eval(pl.element().cast(pl.Float64, strict=False)),
+            conn_status_list = pl.int_ranges(pl.col("start_ts") + self.bin_size, pl.col("ts") - self.bin_size, self.bin_size)
+                .map_elements(lambda n: ["open"] * n.len(), return_dtype=pl.List(pl.Int64))
+            )
         df = df.with_columns(
-            ts_list_len = pl.col("ts_list").list.len()
-        )
-            
-        # Handle connection status
-
-        df = df.with_columns(
-            conn_status = pl.when(pl.col("start_ts").list.len() > 0)
-                .then(pl.repeat(1, pl.col("ts_list_len")))
+            end_ts = pl.col("ts"),
+            end_conn_status = pl.when(pl.col("duration").is_not_null())
+                .then(pl.lit("closing"))
         )
 
         # Concat everything back
         df = df.with_columns(
-            ts = pl.concat_list("ts_list", "ts"))
+            ts = pl.concat_list("start_ts", "ts_list", "end_ts"),
+            conn_status = pl.concat_list("start_conn_status", "conn_status_list", "end_conn_status")
+        )
 
         # Explode
         df = df.explode(["ts", "conn_status"])
@@ -286,7 +298,15 @@ class UWF22(L.LightningDataModule):
         self.servicemap.update(src_services) # type: ignore
         self.servicemap.update(dest_services) # type: ignore
 
+        factorize_cols = ["service", "proto", "conn_state", "conn_status", "label_tactic"]
+
         # Apply the keyword map
+        df = df.with_columns(
+            service = pl.col("service").cast(service_enum),
+            proto = pl.col("proto").cast(proto_enum),
+            conn_state = pl.col("conn_state").cast(conn_state_enum),
+            label_tactic = pl.col("label_tactic").cast(label_tactic_enum),
+        )
         for col in self.keyword_map:
             df.with_columns(
                 pl.col(col).fill_nan("None")
