@@ -17,9 +17,8 @@ from models.Try1 import LitFullModel as Try1
 from models.Try2 import LitFullModel as Try2
 from models.Try2H import LitFullModel as Try2H
 from models.Try3 import LitFullModel as Try3
-from datasets.UWF22H_local import UWF22HL
-from datasets.UWF import UWF22L, UWF22FallL, UWF24L, UWF24FallL
-from datasets.UWF_Shuffled import UWF22S
+from datasets.UWF22H_local import UWF22 as UWF22H
+from datasets.UWF_Shuffled import UWF22, UWF22Fall, UWF24, UWF24Fall
 from datasets.LANL_local import LANLL
 
 def parse_args():
@@ -38,6 +37,8 @@ def parse_args():
                         help="Maximum number of training epochs")
     parser.add_argument('--num-devices', default="auto",
                         help="The amount of devices used by the Trainer")
+    parser.add_argument('--num-workers', default=0,
+                        help="The amount of workers used by the dataloader")
     parser.add_argument('--dataset-folder', type=str, default="/data/datasets",
                         help="Folder to store all datasets")
     
@@ -63,7 +64,7 @@ def main():
     ]
 
     if args.dataset == "UWF22":
-        dataset = UWF22S(args.dataset_folder,
+        dataset = UWF22(args.dataset_folder,
                          bin_size=5,
                          batch_size=60,
                          account_for_duration=True,
@@ -72,28 +73,47 @@ def main():
                          shuffle_type=args.shuffle_type,
                          shuffle_bin_size=0.1,
                          transforms=transformations,
-                         num_workers=3)
+                         num_workers=args.num_workers)
     elif args.dataset == "UWF22h":
         transformations = []
-        dataset = UWF22HL(args.dataset_folder, 
+        dataset = UWF22H(args.dataset_folder,
                          bin_size=20,
                          batch_size=350,
-                         transforms=transformations)
+                         transforms=transformations,
+                         num_workers=args.num_workers)
     elif args.dataset == "UWF22Fall":
-        dataset = UWF22FallL(args.dataset_folder, 
+        dataset = UWF22Fall(args.dataset_folder,
                          bin_size=20,
                          batch_size=350,
-                         transforms=transformations)
+                         account_for_duration=True,
+                         shuffle=args.shuffle,
+                         shuffle_every_time=False,
+                         shuffle_type=args.shuffle_type,
+                         shuffle_bin_size=0.1,
+                         transforms=transformations,
+                         num_workers=args.num_workers)
     elif args.dataset == "UWF24":
-        dataset = UWF24L(args.dataset_folder, 
+        dataset = UWF24(args.dataset_folder,
                          bin_size=20,
                          batch_size=350,
-                         transforms=transformations)
+                         account_for_duration=True,
+                         shuffle=args.shuffle,
+                         shuffle_every_time=False,
+                         shuffle_type=args.shuffle_type,
+                         shuffle_bin_size=0.1,
+                         transforms=transformations,
+                         num_workers=args.num_workers)
     elif args.dataset == "UWF24Fall":
-        dataset = UWF24FallL(args.dataset_folder, 
+        dataset = UWF24Fall(args.dataset_folder,
                          bin_size=20,
                          batch_size=350,
-                         transforms=transformations)
+                         account_for_duration=True,
+                         shuffle=args.shuffle,
+                         shuffle_every_time=False,
+                         shuffle_type=args.shuffle_type,
+                         shuffle_bin_size=0.1,
+                         transforms=transformations,
+                         num_workers=args.num_workers)
     elif args.dataset == "LANL":
         transformations = [
             RemoveDuplicatedEdges(key=["edge_attr", "edge_weight", "time", "y"]),

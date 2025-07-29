@@ -22,7 +22,7 @@ from transforms.EnrichHost import EnrichHost
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class UWF22L(L.LightningDataModule):
+class UWF22(L.LightningDataModule):
 
     download_data = [
         {
@@ -404,7 +404,7 @@ class UWF22L(L.LightningDataModule):
                           collate_fn=lambda x: x[0])
     
 class GeneratorDataset(torch.utils.data.IterableDataset):
-    def __init__(self, dataset: UWF22L, stage: Literal['train', 'val', 'test']):
+    def __init__(self, dataset: UWF22, stage: Literal['train', 'val', 'test']):
         super().__init__()
         self.dataset = dataset
         self.stage = stage
@@ -448,7 +448,7 @@ class GeneratorDataset(torch.utils.data.IterableDataset):
 
         return num_batches
     
-class UWF22FallL(UWF22L):
+class UWF22Fall(UWF22):
 
     download_data = [
         {
@@ -523,7 +523,7 @@ class UWF22FallL(UWF22L):
         # Lastly, save those hyperparams
         self.save_hyperparameters()
 
-class UWF24L(UWF22L):
+class UWF24(UWF22):
 
     download_data = [
         {
@@ -574,7 +574,7 @@ class UWF24L(UWF22L):
         # Lastly, save those hyperparams
         self.save_hyperparameters()
 
-class UWF24FallL(UWF22L):
+class UWF24Fall(UWF22):
 
     download_data = [
         {
