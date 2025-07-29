@@ -6,6 +6,7 @@ pyarrow
 randomname
 comet_ml
 lightning[extra]
+litmodels
 torchmetrics
 pytest
 networkx-temporal[draw]

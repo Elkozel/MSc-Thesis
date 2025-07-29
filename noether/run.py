@@ -3,6 +3,7 @@ import comet_ml
 import os
 import argparse
 from comet_ml.integration.pytorch import log_model
+import litmodels
 import torch
 from pytorch_lightning.loggers import CometLogger
 from transforms.AddInOutDegree import AddInOutDegree
