@@ -28,10 +28,17 @@ def parse_args():
                         help="Model type to use", default="try2")
     parser.add_argument('--dataset', type=str, choices=["UWF22", "UWF22h", "UWF22Fall", "UWF24", "UWF24Fall", 'LANL'],
                         help="Dataset to use", default="UWF22")
+    parser.add_argument('--account-for-duration', action=argparse.BooleanOptionalAction,
+                        help="Whether extra records should be added to account for connections, which are bigger \
+                            than the bin size", default=True)
     parser.add_argument('--shuffle', action=argparse.BooleanOptionalAction,
                         help="Whether the dataset should be shuffled", default=True)
     parser.add_argument('--shuffle-type', type=str, choices=["day", "random"],
                         help="The type of shuffling to be applied", default="day")
+    parser.add_argument('--shuffle-bin-size', type=float, default=0.1,
+                        help="The size of the bins used during the shuffling process")
+    parser.add_argument('--shuffle-every-time', action=argparse.BooleanOptionalAction,
+                        help="Whether to reshuffle the dataset if it has already been shuffled previously", default=False)
 
     parser.add_argument('--max-epochs', type=int, default=50,
                         help="Maximum number of training epochs")
@@ -67,11 +74,11 @@ def main():
         dataset = UWF22(args.dataset_folder,
                          bin_size=5,
                          batch_size=60,
-                         account_for_duration=True,
+                         account_for_duration=args.account_for_duration,
                          shuffle=args.shuffle,
-                         shuffle_every_time=False,
+                         shuffle_every_time=args.shuffle_every_time,
                          shuffle_type=args.shuffle_type,
-                         shuffle_bin_size=0.1,
+                         shuffle_bin_size=args.shuffle_bin_size,
                          transforms=transformations,
                          num_workers=args.num_workers)
     elif args.dataset == "UWF22h":
@@ -85,33 +92,33 @@ def main():
         dataset = UWF22Fall(args.dataset_folder,
                          bin_size=20,
                          batch_size=350,
-                         account_for_duration=True,
+                         account_for_duration=args.account_for_duration,
                          shuffle=args.shuffle,
-                         shuffle_every_time=False,
+                         shuffle_every_time=args.shuffle_every_time,
                          shuffle_type=args.shuffle_type,
-                         shuffle_bin_size=0.1,
+                         shuffle_bin_size=args.shuffle_bin_size,
                          transforms=transformations,
                          num_workers=args.num_workers)
     elif args.dataset == "UWF24":
         dataset = UWF24(args.dataset_folder,
                          bin_size=20,
                          batch_size=350,
-                         account_for_duration=True,
+                         account_for_duration=args.account_for_duration,
                          shuffle=args.shuffle,
-                         shuffle_every_time=False,
+                         shuffle_every_time=args.shuffle_every_time,
                          shuffle_type=args.shuffle_type,
-                         shuffle_bin_size=0.1,
+                         shuffle_bin_size=args.shuffle_bin_size,
                          transforms=transformations,
                          num_workers=args.num_workers)
     elif args.dataset == "UWF24Fall":
         dataset = UWF24Fall(args.dataset_folder,
                          bin_size=20,
                          batch_size=350,
-                         account_for_duration=True,
+                         account_for_duration=args.account_for_duration,
                          shuffle=args.shuffle,
-                         shuffle_every_time=False,
+                         shuffle_every_time=args.shuffle_every_time,
                          shuffle_type=args.shuffle_type,
-                         shuffle_bin_size=0.1,
+                         shuffle_bin_size=args.shuffle_bin_size,
                          transforms=transformations,
                          num_workers=args.num_workers)
     elif args.dataset == "LANL":
