@@ -1,6 +1,5 @@
 import comet_ml
 
-import os
 import argparse
 from comet_ml.integration.pytorch import log_model
 import litmodels
@@ -29,7 +28,7 @@ def parse_args():
     parser.add_argument('--model', type=str, choices=["try0", 'try1', 'try2', 'try2h', 'try3'],
                         help="Model type to use", default="try2")
     parser.add_argument('--dataset', type=str, choices=["UWF22", "UWF22h", "UWF22Fall", "UWF24", "UWF24Fall", 'LANL'],
-                        help="Dataset to use", default="LANL")
+                        help="Dataset to use", default="UWF22")
     parser.add_argument('--shuffle', action=argparse.BooleanOptionalAction,
                         help="Whether the dataset should be shuffled", default=True)
     parser.add_argument('--shuffle-type', type=str, choices=["day", "random"],
@@ -69,10 +68,11 @@ def main():
                          batch_size=60,
                          account_for_duration=True,
                          shuffle=args.shuffle,
-                         shuffle_every_time=True,
+                         shuffle_every_time=False,
                          shuffle_type=args.shuffle_type,
                          shuffle_bin_size=0.1,
-                         transforms=transformations)
+                         transforms=transformations,
+                         num_workers=3)
     elif args.dataset == "UWF22h":
         transformations = []
         dataset = UWF22HL(args.dataset_folder, 

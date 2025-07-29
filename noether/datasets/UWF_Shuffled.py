@@ -14,6 +14,7 @@ class UWF22S(UWF22L):
                  from_time: int = 0,
                  to_time: int = 26816821, # (Relative) timestamp of last event is 26816820.542023897
                  transforms: list = [],
+                 num_workers: int = 0,
                  batch_split: list = [0.6, 0.25, 0.15], 
                  dataset_name: str = "UWF22_Shuffled",
                  account_for_duration: bool = True,
@@ -22,7 +23,7 @@ class UWF22S(UWF22L):
                  shuffle_every_time: bool = False):
         
         self.original_dataset_name = dataset_name.replace("_Shuffled", "")
-        super().__init__(data_dir, bin_size, batch_size, from_time, to_time, transforms, batch_split, self.original_dataset_name, account_for_duration)
+        super().__init__(data_dir, bin_size, batch_size, from_time, to_time, transforms, num_workers, batch_split, self.original_dataset_name, account_for_duration)
         
         self.shuffle = shuffle
         self.shuffle_type = shuffle_type

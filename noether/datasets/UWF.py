@@ -67,6 +67,7 @@ class UWF22L(L.LightningDataModule):
                  from_time: int = 0,
                  to_time: int = 16452990000, # Max timestamp is 1645298196.163731
                  transforms: list = [],
+                 num_workers: int = 0,
                  batch_split: list = [0.6, 0.25, 0.15],
                  dataset_name: str = "UWF22",
                  account_for_duration: bool = True):
@@ -78,6 +79,7 @@ class UWF22L(L.LightningDataModule):
         self.batch_size = batch_size
         self.dataset_name = dataset_name
         self.transforms = transforms
+        self.num_workers = num_workers
         self.account_for_duration = account_for_duration
         self.batch_mask = {}
         self.batch_split = batch_split
@@ -295,12 +297,10 @@ class UWF22L(L.LightningDataModule):
         while len(final_batch) < self.batch_size:
             final_batch.append(pd.DataFrame([], columns=columns, dtype="int64"))
 
-
         return final_batch
         
-    def generate_batches(self, batch_type: int | None = None):
+    def generate_batches(self):
         for file in self.download_data:
-            batch_num = 0
             filename = os.path.join(self.data_dir, file["raw_file"])
             df = pd.read_parquet(filename)
             batch: list[pd.DataFrame] = []
@@ -365,64 +365,88 @@ class UWF22L(L.LightningDataModule):
         elif stage == "test":
             stage_id = 2
 
-        for batch, _ in self.generate_batches(stage_id):
+        for batch, batch_stage in self.generate_batches():
+            if batch_stage != stage_id:
+                continue
+
             batch = [self.df_to_data(bin) for bin in batch]
             batch = [self.transform_data(bin) for bin in batch]
             yield Batch.from_data_list(batch)
 
     def train_dataloader(self):
-        stage = 0 # Training
-
-        all_batch_masks = torch.cat([self.batch_mask[file["raw_file"]] for file in self.download_data])
-        num_batches = int((all_batch_masks == stage).count_nonzero())
-
         dataset = GeneratorDataset(
-            generator_fn=lambda: self.batch_generator("train"),
-            length=num_batches
+            dataset = self,
+            stage = "train"
         )
 
         return DataLoader(dataset,
+                          num_workers=self.num_workers,
                           collate_fn=lambda x: x[0])
     
     def val_dataloader(self):
-        stage = 1 # Validation
-
-        all_batch_masks = torch.cat([self.batch_mask[file["raw_file"]] for file in self.download_data])
-        num_batches = int((all_batch_masks == stage).count_nonzero())
-
         dataset = GeneratorDataset(
-            generator_fn=lambda: self.batch_generator("val"),
-            length=num_batches
+            dataset = self,
+            stage = "val"
         )
 
         return DataLoader(dataset,
+                          num_workers=self.num_workers,
                           collate_fn=lambda x: x[0])
     
     def test_dataloader(self):
-        stage = 2 # Testing
-
-        all_batch_masks = torch.cat([self.batch_mask[file["raw_file"]] for file in self.download_data])
-        num_batches = int((all_batch_masks == stage).count_nonzero())
-
         dataset = GeneratorDataset(
-            generator_fn=lambda: self.batch_generator("test"),
-            length=num_batches
+            dataset = self,
+            stage = "test"
         )
 
         return DataLoader(dataset,
+                          num_workers=self.num_workers,
                           collate_fn=lambda x: x[0])
     
 class GeneratorDataset(torch.utils.data.IterableDataset):
-    def __init__(self, generator_fn: Callable, length: int):
+    def __init__(self, dataset: UWF22L, stage: Literal['train', 'val', 'test']):
         super().__init__()
-        self.generator_fn = generator_fn
-        self._length = length
+        self.dataset = dataset
+        self.stage = stage
+
+        if stage == "train":
+            self.stage_num = 0
+        elif stage == "val":
+            self.stage_num = 1
+        elif stage == "test":
+            self.stage_num = 2
+        else:
+            raise Exception(f"Stage {stage} not found")
 
     def __iter__(self):
-        return self.generator_fn()
+        worker_info = torch.utils.data.get_worker_info()
+        
+        if worker_info is None:
+            # Single-worker case: return full iterator
+            return self.dataset.batch_generator(self.stage) # type: ignore
+        else:
+            # Multi-worker case: split workload
+            worker_id = worker_info.id
+            num_workers = worker_info.num_workers
 
-    def __len__(self):
-        return self._length
+            worker_files = [
+                file
+                for file_id, file in enumerate(self.dataset.download_data)
+                if file_id % num_workers == worker_id
+            ]
+
+            self.dataset.download_data = worker_files
+
+            return self.dataset.batch_generator(self.stage) # type: ignore
+        
+
+    def __len__(self):        
+        all_batch_masks = torch.cat([
+            self.dataset.batch_mask[file["raw_file"]] 
+            for file in self.dataset.download_data])
+        num_batches = int((all_batch_masks == self.stage_num).sum())
+
+        return num_batches
     
 class UWF22FallL(UWF22L):
 
@@ -488,10 +512,11 @@ class UWF22FallL(UWF22L):
                  from_time: int = 0,
                  to_time: int = 26816821, # (Relative) timestamp of last event is 26816820.542023897
                  transforms: list = [],
+                 num_workers: int = 0,
                  batch_split: list = [0.6, 0.25, 0.15], 
                  dataset_name: str = "UWF22Fall",
                  account_for_duration: bool = True):
-        super().__init__(data_dir, bin_size, batch_size, from_time, to_time, transforms, batch_split, dataset_name, account_for_duration)
+        super().__init__(data_dir, bin_size, batch_size, from_time, to_time, transforms, num_workers, batch_split, dataset_name, account_for_duration)
 
         self.ts_first_event = 1639746045.251239 # This allows us to easily make time relative
 
@@ -538,10 +563,11 @@ class UWF24L(UWF22L):
                  from_time: int = 0,
                  to_time: int = 21758350, # (Relative) timestamp of last event is 21758350.529811144
                  transforms: list = [],
+                 num_workers: int = 0,
                  batch_split: list = [0.6, 0.25, 0.15],
                  dataset_name: str = "UWF24",
                  account_for_duration: bool = True):
-        super().__init__(data_dir, bin_size, batch_size, from_time, to_time, transforms, batch_split, dataset_name, account_for_duration)
+        super().__init__(data_dir, bin_size, batch_size, from_time, to_time, transforms, num_workers, batch_split, dataset_name, account_for_duration)
 
         self.ts_first_event = 1709092837.805641 # This allows us to easily make time relative
 
@@ -596,10 +622,11 @@ class UWF24FallL(UWF22L):
                  from_time: int = 0,
                  to_time: int = 6835980, # (Relative) timestamp of last event is 6835979.18627286
                  transforms: list = [],
+                 num_workers: int = 0,
                  batch_split: list = [0.6, 0.25, 0.15],
                  dataset_name: str = "UWF24Fall",
                  account_for_duration: bool = True):
-        super().__init__(data_dir, bin_size, batch_size, from_time, to_time, transforms, batch_split, dataset_name, account_for_duration)
+        super().__init__(data_dir, bin_size, batch_size, from_time, to_time, transforms, num_workers, batch_split, dataset_name, account_for_duration)
 
         self.ts_first_event = 1726952812.207993 # This allows us to easily make time relative
 
