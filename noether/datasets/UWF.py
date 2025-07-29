@@ -220,7 +220,7 @@ class UWF22(L.LightningDataModule):
             ts_list = pl.int_ranges(pl.col("start_ts") + self.bin_size, pl.col("ts") - self.bin_size, self.bin_size)
                 .list.eval(pl.element().cast(pl.Float64, strict=False)),
             conn_status_list = pl.int_ranges(pl.col("start_ts") + self.bin_size, pl.col("ts") - self.bin_size, self.bin_size)
-                .map_elements(lambda n: ["open"] * n.len(), return_dtype=pl.List(pl.Int64))
+                .map_elements(lambda n: ["open"] * n.len(), return_dtype=pl.List)
             )
         df = df.with_columns(
             end_ts = pl.col("ts"),
