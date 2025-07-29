@@ -48,6 +48,8 @@ def parse_args():
                         help="The amount of workers used by the dataloader")
     parser.add_argument('--dataset-folder', type=str, default="/data/datasets",
                         help="Folder to store all datasets")
+    parser.add_argument('--trainer-folder', type=str, default="/data",
+                        help="Root folder for the Torch Lightning trainer")
     
     return parser.parse_args()
 
@@ -190,6 +192,7 @@ def main():
                         devices=args.num_devices,
                         logger=comet_logger,  # type: ignore
                         log_every_n_steps=1,
+                        default_root_dir=args.trainer_folder,
                         callbacks=[EarlyStopping(monitor="val_loss")]) # type: ignore
     trainer.fit(model, dataset)
     trainer.test(model, dataset)
