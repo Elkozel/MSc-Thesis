@@ -131,6 +131,7 @@ class LitFullModel(L.LightningModule):
         })
 
         self.rnn_window_size = rnn_window_size
+        self.out_classes = out_classes
         self.model_name = model_name
         self.binary_threshold = binary_threshold
         self.negative_edge_sampling_min = negative_edge_sampling_min
@@ -234,7 +235,10 @@ class LitFullModel(L.LightningModule):
 
         # Calculate loss
         pred_loss = F.binary_cross_entropy_with_logits(link_pred_logits, edge_pred_labels.float())
-        class_loss = F.cross_entropy(link_class, edge_class_labels.long())
+        weights = torch.nn.functional.normalize(torch.Tensor([1] + [
+            3 for _ in range(self.out_classes - 1)
+        ]), dim=0)
+        class_loss = F.cross_entropy(link_class, edge_class_labels.long(), weight=weights)
 
         # Confidence loss
         # conf_weighted_class_loss = F.cross_entropy(link_class, edge_class_labels.long(), reduction='none')
@@ -293,10 +297,10 @@ class LitFullModel(L.LightningModule):
 
         # Calculate all metrics (also for the full batch)
         metrics: dict[str, torchmetrics.Metric] = dict()
-        metrics.update(self.link_pred_metrics)
-        metrics.update(self.link_class_metrics)
-        metrics.update(self.mal_metrics)
-        metrics.update(self.mal_only_metrics)
+        metrics.update(self.link_pred_metrics) # type: ignore
+        metrics.update(self.link_class_metrics) # type: ignore
+        metrics.update(self.mal_metrics) # type: ignore
+        metrics.update(self.mal_only_metrics) # type: ignore
         matric_results = {
             key: metric.compute() if metric.update_count > 0 else 0
             for key, metric in metrics.items()
@@ -331,7 +335,7 @@ class LitFullModel(L.LightningModule):
             return torch.tensor(0.0, requires_grad=True)
         
         try:
-            results = self.run_trough_batch(batch, step)
+            results = self.run_trough_batch(batch)
         except NoPositiveEdgesException as e:
             return torch.tensor(0.0, requires_grad=True)
         
@@ -354,7 +358,7 @@ class LitFullModel(L.LightningModule):
             return torch.tensor(0.0, requires_grad=True)
             
         try:
-            results = self.run_trough_batch(batch, step)
+            results = self.run_trough_batch(batch)
         except NoPositiveEdgesException as e:
             return torch.tensor(0.0, requires_grad=True)
         
@@ -377,7 +381,7 @@ class LitFullModel(L.LightningModule):
             return torch.tensor(0.0, requires_grad=True)
             
         try:
-            results = self.run_trough_batch(batch, step)
+            results = self.run_trough_batch(batch)
         except NoPositiveEdgesException as e:
             return torch.tensor(0.0, requires_grad=True)
         
