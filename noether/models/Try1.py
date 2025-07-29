@@ -52,13 +52,13 @@ class LinkTypeClassifier(nn.Module):
     def __init__(self, input_dim, num_classes):
         super().__init__()
         self.mlp = nn.Sequential(
-            nn.Linear(input_dim * 2, input_dim),
+            nn.Linear(input_dim * 2 + 1, input_dim),
             nn.ReLU(),
             nn.Linear(input_dim, num_classes)
         )
 
-    def forward(self, h_src, h_dst):
-        h_concat = torch.cat([h_src, h_dst], dim=-1)
+    def forward(self, h_src, h_dst, link_pred = torch.Tensor([])):
+        h_concat = torch.cat([h_src, h_dst, link_pred], dim=-1)
         return self.mlp(h_concat)  # No softmax; use CrossEntropyLoss
     
 class LitFullModel(L.LightningModule):
@@ -165,7 +165,7 @@ class LitFullModel(L.LightningModule):
 
         return link_pred_scores, link_class_logits
     
-    def run_trough_batch(self, data: Batch, stage: Literal['train', 'val', 'test']):
+    def run_trough_batch(self, data: Batch):
 
         ### GNN Encoding ###
         gnn_features = self.gnn(data.x, data.edge_index, data.edge_attr)
@@ -227,24 +227,19 @@ class LitFullModel(L.LightningModule):
         src = test_edges[0]
         dst = test_edges[1]
         predicted_embeddings = data.x
-        link_pred = self.link_pred(predicted_embeddings[src], predicted_embeddings[dst])  # shape [num_edges]
-        link_class = self.link_classifier(predicted_embeddings[src], predicted_embeddings[dst]) # shape [num_edges]
+        link_pred_logits = self.link_pred(predicted_embeddings[src], predicted_embeddings[dst])  # shape [num_edges]
+        link_pred_probs = torch.sigmoid(link_pred_logits).unsqueeze(1)  # Shape: [num_edges, 1]
+
+        link_class = self.link_classifier(predicted_embeddings[src], predicted_embeddings[dst], link_pred_probs)
 
         # Calculate loss
-        pred_loss = F.binary_cross_entropy_with_logits(link_pred, edge_pred_labels.float())
+        pred_loss = F.binary_cross_entropy_with_logits(link_pred_logits, edge_pred_labels.float())
         class_loss = F.cross_entropy(link_class, edge_class_labels.long())
 
-        # Classification False positives
-        # malicious_event_mask = (edge_class_labels > 0.5)
-        # malicious_event_count = malicious_event_mask.count_nonzero()
-
-        # false_positve_weight = 1
-        # false_negative_weight = 3
-
-        # false_negative_loss = F.cross_entropy(link_class[malicious_event_mask], edge_class_labels[malicious_event_mask].long()) if malicious_event_count > 0 else 0
-        # false_positive_loss = F.cross_entropy(link_class[malicious_event_mask == False], edge_class_labels[malicious_event_mask == False].long())
-
-        # class_loss = false_positive_loss * false_positve_weight + false_negative_loss * false_negative_weight
+        # Confidence loss
+        # conf_weighted_class_loss = F.cross_entropy(link_class, edge_class_labels.long(), reduction='none')
+        # conf_weighted_class_loss = (conf_weighted_class_loss * link_pred_probs.squeeze()).mean()
+        
         loss = class_loss
 
 
@@ -256,7 +251,7 @@ class LitFullModel(L.LightningModule):
                 # So we skip when only true labels are present
                 if edge_class_labels.sum() == 0:
                     continue
-            metric(link_pred, edge_pred_labels.int())
+            metric(link_pred_logits, edge_pred_labels.int())
 
         # Metrics from link classification
         for name, metric in self.link_class_metrics.items():

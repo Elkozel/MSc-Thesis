@@ -46,8 +46,8 @@ class LinkTypeClassifier(nn.Module):
             nn.Linear(input_dim, num_classes)
         )
 
-    def forward(self, h_src, h_dst):
-        h_concat = torch.cat([h_src, h_dst], dim=-1)
+    def forward(self, h_src, h_dst, link_pred = torch.Tensor([])):
+        h_concat = torch.cat([h_src, h_dst, link_pred], dim=-1)
         return self.mlp(h_concat)  # No softmax; use CrossEntropyLoss
     
 class LitFullModel(Try1):
