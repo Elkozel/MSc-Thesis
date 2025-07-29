@@ -17,10 +17,7 @@ from torch_geometric.data.batch import Batch
 import lightning as L
 from transforms.EnrichHost import EnrichHost
 
-from noether.datasets.UWF import UWF22L
-from datasets.UWF22Fall_local import UWF22FallL
-from datasets.UWF24_local import UWF24L
-from datasets.UWF24Fall_local import UWF24FallL
+from datasets.UWF import UWF22, UWF22Fall, UWF24, UWF24Fall
 from itertools import chain
 
 
@@ -38,25 +35,25 @@ class UWFCombined(L.LightningDataModule):
                  batch_split: list = [0.6, 0.25, 0.15],
                  dataset_name: str = "UWFCombined"):
         super().__init__()
-        self.all_datasets.append(UWF22L(data_dir, 
+        self.all_datasets.append(UWF22(data_dir, 
                                         bin_size, 
                                         batch_size, 
                                         transforms=transforms, 
                                         batch_split=batch_split, 
                                         dataset_name=dataset_name))
-        self.all_datasets.append(UWF22FallL(data_dir, 
+        self.all_datasets.append(UWF22Fall(data_dir, 
                                         bin_size, 
                                         batch_size, 
                                         transforms=transforms, 
                                         batch_split=batch_split, 
                                         dataset_name=dataset_name))
-        self.all_datasets.append(UWF24L(data_dir, 
+        self.all_datasets.append(UWF24(data_dir, 
                                         bin_size, 
                                         batch_size, 
                                         transforms=transforms, 
                                         batch_split=batch_split, 
                                         dataset_name=dataset_name))
-        self.all_datasets.append(UWF24FallL(data_dir, 
+        self.all_datasets.append(UWF24Fall(data_dir, 
                                         bin_size, 
                                         batch_size, 
                                         transforms=transforms, 

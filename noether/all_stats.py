@@ -1,5 +1,5 @@
-from datasets.UWF import UWF22L, UWF22FallL, UWF24L, UWF24FallL
-from datasets.UWF22H_local import UWF22HL
+from datasets.UWF import UWF22, UWF22Fall, UWF24, UWF24Fall
+from datasets.UWF22H_local import UWF22 as UWF22H
 from ordered_set import OrderedSet
 
 possible_datasets = ["UWF22", "UWF22h", "UWF22Fall", "UWF24", "UWF24Fall"]
@@ -173,15 +173,15 @@ for dataset_name in possible_datasets:
         continue
 
     if dataset_name == "UWF22":
-        dataset = UWF22L(dataset_folder)
+        dataset = UWF22(dataset_folder)
     elif dataset_name == "UWF22h":
-        dataset = UWF22HL(dataset_folder)
+        dataset = UWF22H(dataset_folder)
     elif dataset_name == "UWF22Fall":
-        dataset = UWF22FallL(dataset_folder)
+        dataset = UWF22Fall(dataset_folder)
     elif dataset_name == "UWF24":
-        dataset = UWF24L(dataset_folder)
+        dataset = UWF24(dataset_folder)
     elif dataset_name == "UWF24Fall":
-        dataset = UWF24FallL(dataset_folder)
+        dataset = UWF24Fall(dataset_folder)
     else:
         raise Exception(f"Dataset {dataset_name} not found")
 
