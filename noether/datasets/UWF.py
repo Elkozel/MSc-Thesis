@@ -200,20 +200,29 @@ class UWF22(L.LightningDataModule):
                 conn_status = 2
             )
             return df
+        
+        df = df.with_columns(start_ts = pl.col("ts") - pl.col("duration"))
+
+        # Handle times
+        df = df.with_columns(
+            ts_list=pl.int_ranges("start_ts", "ts", self.bin_size)
+                       .list.eval(pl.element().cast(pl.Float64, strict=False)))
+        df = df.with_columns(
+            ts_list_len = pl.col("ts_list").list.len()
+        )
+            
+        # Handle connection status
 
         df = df.with_columns(
-            pl.when(pl.col("duration").is_not_null())
-                .then(pl.int_ranges(
-                    pl.col("ts") - pl.col("duration"), # start ts (when the connection was started)
-                    pl.col("ts"), # the second to last ts (the last one is the real event)
-                    self.bin_size, eager=True).tail(-1)).alias("ts")
-        )
-        df = df.with_columns(
-            pl.when(pl.col("duration").is_not_nan())
-                .then([0] + pl.repeat(1, pl.col("ts").list.len() - 1).append(2))
-                .otherwise([2]).alias("conn_status")
+            conn_status = pl.when(pl.col("start_ts").list.len() > 0)
+                .then(pl.repeat(1, pl.col("ts_list_len")))
         )
 
+        # Concat everything back
+        df = df.with_columns(
+            ts = pl.concat_list("ts_list", "ts"))
+
+        # Explode
         df = df.explode(["ts", "conn_status"])
 
         # Recast to a float
@@ -264,21 +273,24 @@ class UWF22(L.LightningDataModule):
             self.keyword_map[col].update(collected_df.select(col).fillna("None").unique()) # type: ignore
         self.hostmap.update(collected_df.select("src_ip_zeek").fill_nan("None").unique()) # type: ignore
         self.hostmap.update(collected_df.select("dest_ip_zeek").fill_nan("None").unique()) # type: ignore
-        self.servicemap.update(collected_df.select(
+        
+        src_services = collected_df.select(
             pl.concat_list("src_ip_zeek", "src_port_zeek").unique()
-        ).map_rows(lambda x: (x[0], x[1])))
-        collected_df.select(["src_ip_zeek", "src_port_zeek"]).unique().map_rows(lambda x: (x[0], x.iloc[1]))
-        self.servicemap.update(df[["src_ip_zeek", "src_port_zeek"]]
-                               .drop_duplicates()
-                               .reset_index(drop=True)
-                               .apply(lambda x: (x.iloc[0], x.iloc[1]), axis=1)) # type: ignore
-        self.servicemap.update(df[["dest_ip_zeek", "dest_port_zeek"]]
-                               .drop_duplicates()
-                               .reset_index(drop=True)
-                               .apply(lambda x: (x.iloc[0], x.iloc[1]), axis=1)) # type: ignore
+        ).map_rows(lambda x: (x[0], x[1]))
+
+        dest_services = collected_df.select(
+            pl.concat_list("dest_ip_zeek", "dest_port_zeek").unique()
+        ).map_rows(lambda x: (x[0], x[1]))
+
+
+        self.servicemap.update(src_services) # type: ignore
+        self.servicemap.update(dest_services) # type: ignore
 
         # Apply the keyword map
         for col in self.keyword_map:
+            df.with_columns(
+                pl.col(col).fill_nan("None")
+            )
             df[col] = df[col].fillna("None").map(self.keyword_map[col].index)
         df["src_ip_id"] = df["src_ip_zeek"].map(self.hostmap.index)
         df["dest_ip_id"] = df["dest_ip_zeek"].map(self.hostmap.index)
@@ -288,9 +300,13 @@ class UWF22(L.LightningDataModule):
                                 .apply(lambda x: (x.iloc[0], x.iloc[1]), axis=1).map(self.servicemap.index)
 
         # Bin the data
-        df['bin'] = df['ts'] // self.bin_size
+        df.with_columns(
+            bin = pl.col("ts") // self.bin_size
+        )
         # Make bin relative
-        df["bin"] = df["bin"] - df["bin"].min()
+        df.with_columns(
+            bin = pl.col("bin") - pl.col("bin").min()
+        )
         
         return df
 
@@ -313,16 +329,18 @@ class UWF22(L.LightningDataModule):
     def generate_batches(self):
         for file in self.download_data:
             filename = os.path.join(self.data_dir, file["raw_file"])
-            df = pd.read_parquet(filename)
+            df = pl.scan_parquet(filename)
             batch: list[pd.DataFrame] = []
             batch_mask = self.batch_mask[file["raw_file"]]
 
             df = self.bin_df(df)
-            df["batch"] = df["bin"] // self.batch_size
-            grouped_batches = df.groupby("batch", observed=False)
+            df = df.with_columns(
+                batch = pl.col("bin") // self.batch_size
+            )
+            grouped_batches = df.group_by("batch")
 
             for batch, group in grouped_batches: # type: ignore
-                bins = group.groupby("bin")
+                bins = group.group_by("bin")
                 corrected_batch = self.fill_in_gaps_in_batch(bins, batch*self.batch_size, df.columns)
                 yield corrected_batch, int(batch_mask[int(batch)]) # type: ignore
 
