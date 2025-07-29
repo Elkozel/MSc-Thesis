@@ -139,8 +139,7 @@ class UWF22L(L.LightningDataModule):
         # Download files if nesessary
         self.download_all_files()
 
-    def generate_split_file(self, filename: str):
-        df = pd.read_parquet(os.path.join(self.data_dir, filename), columns=["ts", "duration"])
+    def generate_split_file(self, df: pd.DataFrame):
         df = self.expand_duration(df)
 
         # Make time relative
@@ -149,19 +148,17 @@ class UWF22L(L.LightningDataModule):
         # Filter only the timestamps we care about
         df = df[(df["ts"] >= self.from_time) & (df["ts"] < self.to_time)]
         if df.empty:
-            self.batch_mask[filename] = torch.empty(0)
-            return
+            return torch.empty(0)
 
         # Calculate bins
-        from_time = math.floor(df["ts"].min())
-        to_time = math.ceil(df["ts"].max())
+        from_bin = df["ts"].min() // self.bin_size
+        to_bin = df["ts"].max() // self.bin_size
+        from_batch = from_bin // self.batch_size
+        to_batch = to_bin // self.batch_size
 
         # Randomly split the indices into training (60%), validation (25%), and test (15%) sets
         generator = torch.Generator().manual_seed(42)
-        from_bin = (from_time // self.bin_size) * self.bin_size
-        to_bin = (to_time // self.bin_size) * self.bin_size
-        bin_range = range(from_bin, to_bin, self.bin_size)
-        num_batches = math.floor(len(bin_range) / self.batch_size) + 1
+        num_batches = int(to_batch - from_batch + 1)
 
         # Create full batch index tensor for this file
         full_idx = torch.arange(num_batches)
@@ -170,17 +167,20 @@ class UWF22L(L.LightningDataModule):
         _, val, test = random_split(idx, self.batch_split, generator=generator)
 
         # Create mask: 0 = train, 1 = val, 2 = test
-        self.batch_mask[filename] = torch.zeros(num_batches, dtype=torch.uint8)
-        self.batch_mask[filename][val.indices] = 1
-        self.batch_mask[filename][test.indices] = 2
+        batch_mask = torch.zeros(num_batches, dtype=torch.uint8)
+        batch_mask[val.indices] = 1
+        batch_mask[test.indices] = 2
 
-        return self.batch_mask[filename]
+        return batch_mask
         
     def setup(self, stage: str):
         for file in self.download_data:
             filename = file["raw_file"]
+            df = pd.read_parquet(os.path.join(self.data_dir, filename), columns=["ts", "duration"])
+
             # Generate the batch masks
-            self.generate_split_file(filename)
+            batch_mask = self.generate_split_file(df)
+            self.batch_mask[filename] = batch_mask
 
     def transform_data(self, data: Union[Data, HeteroData]) -> BaseData:
         for transform in self.transforms:
@@ -224,8 +224,7 @@ class UWF22L(L.LightningDataModule):
 
         return df
     
-    def generate_bins_from_file(self, filename, keyword_map = None) -> Generator[pd.DataFrame, Any, None]:
-        df = pd.read_parquet(filename)
+    def bin_df(self, df: pd.DataFrame, keyword_map = None) -> pd.DataFrame:
         df = self.expand_duration(df)
 
         # Maps for each column are also created automatically
@@ -249,7 +248,7 @@ class UWF22L(L.LightningDataModule):
         # Find only data between the time given
         df = df[(df["ts"] >= self.from_time) & (df["ts"] < self.to_time)]
         if df.empty:
-            return
+            return pd.DataFrame([], columns=df.columns, dtype="int64")
 
         # Update keyword map
         for col in self.keyword_map:
@@ -276,46 +275,45 @@ class UWF22L(L.LightningDataModule):
                                 .apply(lambda x: (x.iloc[0], x.iloc[1]), axis=1).map(self.servicemap.index)
 
         # Bin the data
-        df['bin'] = (df['ts'] // self.bin_size) * self.bin_size
-        df = df.sort_values(["bin", "ts"])
-        grouped = list(df.groupby('bin'))
+        df['bin'] = df['ts'] // self.bin_size
+        # Make bin relative
+        df["bin"] = df["bin"] - df["bin"].min()
+        
+        return df
 
-        previous_start = float(df["bin"].min())
-        for bin_start, group in grouped:
-            # Sometimes there are bins without any data, in this case we have to "simulate"
-            # an empty bin, as it will not be in the groupby. Thus, we send empty dataframes
-            # until we "reach" the target bin
-            while bin_start - previous_start > self.bin_size: # type: ignore
-                previous_start += self.bin_size # type: ignore
-                yield pd.DataFrame([], columns=df.columns, dtype="int64")
-            
-            previous_start = bin_start
-            yield group
+    def fill_in_gaps_in_batch(self, batch, starting_bin, columns):
+        previous_bin = starting_bin
+        final_batch = []
+        for bin, group in batch:
+            while bin - previous_bin > 1:
+                previous_bin += 1
+                final_batch.append(pd.DataFrame([], columns=columns, dtype="int64"))
 
+            final_batch.append(group)
+            previous_bin = bin
+
+        while len(final_batch) < self.batch_size:
+            final_batch.append(pd.DataFrame([], columns=columns, dtype="int64"))
+
+
+        return final_batch
+        
     def generate_batches(self, batch_type: int | None = None):
         for file in self.download_data:
             batch_num = 0
             filename = os.path.join(self.data_dir, file["raw_file"])
+            df = pd.read_parquet(filename)
             batch: list[pd.DataFrame] = []
             batch_mask = self.batch_mask[file["raw_file"]]
 
-            for bin in self.generate_bins_from_file(filename):
-                # Collect bins
-                if len(batch) != self.batch_size:
-                    batch.append(bin)
-                    continue
+            df = self.bin_df(df)
+            df["batch"] = df["bin"] // self.batch_size
+            grouped_batches = df.groupby("batch", observed=False)
 
-                # Create the batch and send it
-                if batch_type is None:
-                    yield batch, int(batch_mask[batch_num])
-                elif batch_mask[batch_num] == batch_type:
-                    yield batch, int(batch_mask[batch_num])
-                batch = []
-                batch_num += 1
-            
-            # Handle leftover bins
-            if len(batch) > 0:
-                yield batch, int(batch_mask[batch_num])
+            for batch, group in grouped_batches: # type: ignore
+                bins = group.groupby("bin")
+                corrected_batch = self.fill_in_gaps_in_batch(bins, batch*self.batch_size, df.columns)
+                yield corrected_batch, int(batch_mask[int(batch)]) # type: ignore
 
     def df_to_data(self, df: pd.DataFrame):
         hostmap_df = pd.DataFrame([
