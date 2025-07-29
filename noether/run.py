@@ -162,7 +162,7 @@ def main():
                         devices=args.num_devices,
                         logger=comet_logger,  # type: ignore
                         log_every_n_steps=1,
-                        callbacks=[EarlyStopping(monitor="val_loss", mode="min", check_on_train_epoch_end=False)]) # type: ignore
+                        callbacks=[EarlyStopping(monitor="val_loss")]) # type: ignore
     trainer.fit(model, dataset)
     trainer.test(model, dataset)
 

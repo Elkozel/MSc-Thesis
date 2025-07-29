@@ -345,6 +345,9 @@ class LitFullModel(L.LightningModule):
             f"{step}_{metric}": value 
             for metric, value in results.items()
         })
+
+        # Log for early stopping
+        self.log(f"{step}_loss", results["loss"])
         
         return results["loss"]
     
@@ -368,6 +371,9 @@ class LitFullModel(L.LightningModule):
             f"{step}_{metric}": value 
             for metric, value in results.items()
         })
+
+        # Log for early stopping
+        self.log(f"{step}_loss", results["loss"])
         
         return results["loss"]
     
@@ -391,6 +397,9 @@ class LitFullModel(L.LightningModule):
             f"{step}_{metric}": value 
             for metric, value in results.items()
         })
+
+        # Log for early stopping
+        self.log(f"{step}_loss", results["loss"])
         
         return results["loss"]
 
