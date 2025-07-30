@@ -149,7 +149,7 @@ class UWF22(L.LightningDataModule):
         # Download files if nesessary
         self.download_all_files()
 
-    def generate_split_file(self, df: pl.DataFrame):
+    def generate_split_file(self, df: pl.LazyFrame) -> torch.Tensor:
         df = self.expand_duration(df)
 
         # Make time relative
@@ -172,7 +172,7 @@ class UWF22(L.LightningDataModule):
 
         # Randomly split the indices into training (60%), validation (25%), and test (15%) sets
         generator = torch.Generator().manual_seed(42)
-        num_batches = to_batch - from_batch + 1
+        num_batches = int(to_batch - from_batch + 1)
 
         # Create full batch index tensor for this file
         full_idx = torch.arange(num_batches)
@@ -188,23 +188,41 @@ class UWF22(L.LightningDataModule):
         return batch_mask
         
     def setup(self, stage: str):
+        service_map = set([])
+        host_map = set([])
         for file in self.download_data:
             filename = file["raw_file"]
-            df = pl.read_parquet(os.path.join(self.data_dir, filename))
+            df = pl.read_parquet(os.path.join(self.data_dir, filename))\
+                .select(["src_ip_zeek", "src_port_zeek", "dest_ip_zeek", "dest_port_zeek", "ts", "duration"])
 
             # Generate the batch masks
             batch_mask = self.generate_split_file(df)
             self.batch_mask[filename] = batch_mask
+
+            # Generate host and service maps
+            collectec_df = df
+            src_host = collectec_df.select("src_ip_zeek").unique().to_series()
+            dest_host = collectec_df.select("dest_ip_zeek").unique().to_series()
+            host_map.update(src_host)
+            host_map.update(dest_host)
+
+            src_services = collectec_df.select(["src_ip_zeek", "src_port_zeek"]).unique().rows()
+            dest_services = collectec_df.select(["dest_ip_zeek", "dest_port_zeek"]).unique().rows()
+            service_map.update(src_services)
+            service_map.update(dest_services)
+
+        # Save maps
+        print("Should have maps by now")
 
     def transform_data(self, data: Union[Data, HeteroData]) -> BaseData:
         for transform in self.transforms:
             data = transform(data)
         return data
     
-    def expand_duration(self, df: pl.DataFrame):
+    def expand_duration(self, df: pl.LazyFrame):
         if not self.account_for_duration:
             df = df.with_columns(
-                conn_status = 2
+                conn_status = "closing"
             )
             return df
         
@@ -235,14 +253,12 @@ class UWF22(L.LightningDataModule):
         )
 
         # Explode
-        df = df.explode(["ts", "conn_status"])
-
-        # Recast to a float
-        df = df.with_columns(
-            pl.col("ts").cast(pl.Float32).alias("ts")
-        ).filter(
-            pl.col("ts") >= 0.0
-        ).sort("ts")
+        df = df.explode(["ts", "conn_status"]) \
+            .with_columns(
+                ts = pl.col("ts").cast(pl.Float32)
+            ).filter(
+                pl.col("ts") >= 0.0
+            ).sort("ts")
 
         return df
     
@@ -250,16 +266,9 @@ class UWF22(L.LightningDataModule):
         df = self.expand_duration(df)
 
         # Maps for each column are also created automatically
-        df.with_columns(
-            pl.col([])
-        )
         if keyword_map is None:
-            self.keyword_map = {col: OrderedSet([]) for col in self.factorize_cols}
             self.hostmap = OrderedSet([])
             self.servicemap = OrderedSet([])
-
-        # Ensure that the label mask starts with "none"
-        self.keyword_map["label_tactic"].update(["none"])
 
         # Make time relative
         df = df.with_columns(
