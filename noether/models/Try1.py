@@ -222,7 +222,7 @@ class LitFullModel(L.LightningModule):
         edge_class_labels = torch.cat([
             data.y[edge_batch >= self.rnn_window_size],
             torch.zeros(negative_edges.size(1)).to(self.device)
-        ])
+        ]).to(self.device)
 
         # Run the full decoding with the batch
         src = test_edges[0]
@@ -237,7 +237,7 @@ class LitFullModel(L.LightningModule):
         pred_loss = F.binary_cross_entropy_with_logits(link_pred_logits, edge_pred_labels.float())
         weights = torch.nn.functional.normalize(torch.Tensor([1] + [
             3 for _ in range(self.out_classes - 1)
-        ]), dim=0)
+        ]), dim=0).to(self.device)
         class_loss = F.cross_entropy(link_class, edge_class_labels.long(), weight=weights)
 
         # Confidence loss

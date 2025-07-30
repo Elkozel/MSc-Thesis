@@ -8,7 +8,6 @@ from typing import List, Literal, Union
 from torch_geometric.nn import GATv2Conv
 from torch_geometric.utils import negative_sampling
 from torch_geometric.data import Data, Batch
-from transformers import T5ForConditionalGeneration, AutoTokenizer
 from torch_geometric.data.data import BaseData
 
 
@@ -110,8 +109,8 @@ class LitFullModel(L.LightningModule):
             hidden_channels = in_channels * 3
 
         # LLM for history encoding
-        self.llm = T5ForConditionalGeneration.from_pretrained('google/byt5-small')
-        self.llm_tokenizer = AutoTokenizer.from_pretrained('google/byt5-small')
+        # self.llm = T5ForConditionalGeneration.from_pretrained('google/byt5-small')
+        # self.llm_tokenizer = AutoTokenizer.from_pretrained('google/byt5-small')
 
         self.gnn = GNNEncoder(in_channels, hidden_channels, dropout_rate, edge_dim)
         self.rnn = RNNEncoder(hidden_channels, rnn_num_layers)
