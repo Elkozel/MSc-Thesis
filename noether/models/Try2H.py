@@ -28,7 +28,7 @@ class GNNEncoder(nn.Module):
         self.dropout = dropout_rate
 
     
-    def transform_hetero_data(self, data: HeteroData):
+    def transform_hetero_data(self, data: HeteroData, device):
         # ========================
         #         Nodes          
         # ========================
@@ -58,8 +58,8 @@ class GNNEncoder(nn.Module):
             node_type.append(torch.full((t.size(0),), type))
 
         # Concatenate all node features into a single tensor
-        node_type = torch.cat(node_type)
-        x = torch.cat(x)
+        node_type = torch.cat(node_type).to(device)
+        x = torch.cat(x).to(device)
 
         # ========================
         #     Edge Attributes     
@@ -90,8 +90,8 @@ class GNNEncoder(nn.Module):
             edge_type.append(torch.full((t.size(0),), type))
 
         # Concatenate all edge attributes into a single tensor
-        edge_attr = torch.cat(edge_attr)
-        edge_type = torch.cat(edge_type)
+        edge_attr = torch.cat(edge_attr).to(device)
+        edge_type = torch.cat(edge_type).to(device)
 
         # ========================
         #         Edges          
@@ -101,13 +101,13 @@ class GNNEncoder(nn.Module):
         edge_dict = data.edge_index_dict
         
         # Concatenate all edge indices (from different edge types) into a single tensor
-        edge_index = torch.cat(list(edge_dict.values()), dim=1)
+        edge_index = torch.cat(list(edge_dict.values()), dim=1).to(device)
         
         # Return the final processed data: node features, edge indices, node types, edge types, and edge attributes
         return x, edge_index, node_type, edge_type, edge_attr
 
-    def forward(self, data):
-        x, edge_index, node_type, edge_type, edge_features = self.transform_hetero_data(data)
+    def forward(self, data, device):
+        x, edge_index, node_type, edge_type, edge_features = self.transform_hetero_data(data, device)
 
         # x: Tensor, edge_index: Union[Tensor, SparseTensor], node_type: Tensor, edge_type: Tensor, edge_attr: Optional[Tensor] = None
         out = self.conv1(x, edge_index, node_type, edge_type, edge_features)
@@ -250,13 +250,13 @@ class LitFullModel(L.LightningModule):
         total_loss = torch.tensor(0.0).to(self.device)
         total_pred_acc = torch.tensor(0.0).to(self.device)
         total_class_acc = torch.tensor(0.0).to(self.device)
-        features = [self.gnn(data) for data in batch.to_data_list()] # type: ignore
+        features = [self.gnn(data, self.device) for data in batch.to_data_list()] # type: ignore
         features = torch.stack(features)
             
         for i in range(num_windows):
             to_idx = i + self.rnn_window_size
             x_features = features[i:to_idx]
-            y_nodes, y_edge_index, _, _, _ = self.gnn.transform_hetero_data(batch.get_example(to_idx)) # type: ignore
+            y_nodes, y_edge_index, _, _, _ = self.gnn.transform_hetero_data(batch.get_example(to_idx), self.device) # type: ignore
             y_labels = torch.cat([store.y for store in batch.get_example(to_idx).edge_stores])
 
             # Positive and negative edge sampling
