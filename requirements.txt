@@ -1,13 +1,8 @@
 tqdm
 pandas
-pymongo
 pyarrow
 comet_ml
 lightning[extra]
-litmodels
 torchmetrics
-pytest
-networkx-temporal[draw]
-urllib3
 ordered-set
 fsspec[http]>=2025.5.0
