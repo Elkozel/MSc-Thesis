@@ -395,10 +395,10 @@ class UWF22(L.LightningDataModule):
             grouped_batches = df.collect().group_by("batch")
 
             for batch, group in grouped_batches: # type: ignore
-                batch = batch[0]
+                batch_num: int = int(batch[0]) # type: ignore
                 bins = group.group_by("bin")
-                corrected_batch = self.fill_in_gaps_in_batch(bins, batch*self.batch_size, df.columns)
-                yield corrected_batch, int(batch_mask[int(batch)]) # type: ignore
+                corrected_batch = self.fill_in_gaps_in_batch(bins, batch_num*self.batch_size, df.columns)
+                yield corrected_batch, int(batch_mask[batch_num])
 
     def df_to_data(self, df: pl.DataFrame):
 
