@@ -278,8 +278,6 @@ class UWF22(L.LightningDataModule):
 
         # Bin the data
         df['bin'] = df['ts'] // self.bin_size
-        # Make bin relative
-        df["bin"] = df["bin"] - df["bin"].min()
         
         return df
 
@@ -304,10 +302,11 @@ class UWF22(L.LightningDataModule):
             filename = os.path.join(self.data_dir, file["raw_file"])
             df = pd.read_parquet(filename)
             batch: list[pd.DataFrame] = []
-            batch_mask = self.batch_mask[file["raw_file"]]
+            batch_mask: torch.Tensor = self.batch_mask[file["raw_file"]]
 
             df = self.bin_df(df)
             df["batch"] = df["bin"] // self.batch_size
+            df["batch"] = df["batch"] - df["batch"].min()
             grouped_batches = df.groupby("batch", observed=False)
 
             for batch, group in grouped_batches: # type: ignore
