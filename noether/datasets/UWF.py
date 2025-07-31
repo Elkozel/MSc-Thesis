@@ -89,6 +89,7 @@ class UWF22(L.LightningDataModule):
         self.transforms = transforms
         self.num_workers = num_workers
         self.account_for_duration = account_for_duration
+        self.account_for_duration = False
         self.batch_mask = {}
         self.batch_split = batch_split
         self.ts_first_event = 1639746045.213779 # This allows us to easily make time relative
@@ -143,11 +144,44 @@ class UWF22(L.LightningDataModule):
             # Use map to apply download_file to all argument tuples in parallel
             pool.map(lambda x: self.download_file(*x), args)
 
+    def generate_maps(self):
+        # Check if the maps are already generated
+        if os.path.exists(os.path.join(self.data_dir, "services.parquet")) and \
+            os.path.exists(os.path.join(self.data_dir, "hosts.parquet")):
+            return  # If so, skip
+        
+        service_map = set([])
+        host_map = set([])
+
+        for file in self.download_data:
+            filename = file["raw_file"]
+            df = pl.read_parquet(os.path.join(self.data_dir, filename))
+
+            src_host = df.select("src_ip_zeek").unique().to_series()
+            dest_host = df.select("dest_ip_zeek").unique().to_series()
+            host_map.update(src_host)
+            host_map.update(dest_host)
+
+            src_services = df.select(["src_ip_zeek", "src_port_zeek"]).unique().rows()
+            dest_services = df.select(["dest_ip_zeek", "dest_port_zeek"]).unique().rows()
+            service_map.update(src_services)
+            service_map.update(dest_services)
+
+        # Save maps
+        s_map = pl.DataFrame(list(zip(*service_map)), schema=["host", "port"])\
+            .write_parquet(os.path.join(self.data_dir, "services.parquet"))
+        h_map = pl.DataFrame(list(host_map), schema=["host"])\
+            .write_parquet(os.path.join(self.data_dir, "hosts.parquet"))
+
+
     def prepare_data(self):
         # Make sure the data dir is there
         os.makedirs(self.data_dir, exist_ok=True)
         # Download files if nesessary
         self.download_all_files()
+        # Generate maps
+        self.generate_maps()
+
 
     def generate_split_file(self, df: pl.LazyFrame) -> torch.Tensor:
         df = self.expand_duration(df)
@@ -160,7 +194,7 @@ class UWF22(L.LightningDataModule):
         # Filter only the timestamps we care about
         collected_df = df.filter(
             (pl.col("ts") >= self.from_time) & (pl.col("ts") < self.to_time)
-        )
+        ).collect()
         if collected_df.is_empty():
             return torch.empty(0)
 
@@ -188,31 +222,24 @@ class UWF22(L.LightningDataModule):
         return batch_mask
         
     def setup(self, stage: str):
-        service_map = set([])
-        host_map = set([])
+        # Get the host and service maps
+        self.hostmap = pl.read_parquet(os.path.join(self.data_dir, "hosts.parquet"))
+        self.hostmap = pl.DataFrame([
+            EnrichHost.enrich_host(host[0], id) for id, host in enumerate(self.hostmap.iter_rows())
+        ])
+        self.host_enum = pl.Enum(self.hostmap.select("ip").to_series())
+
+        self.servicemap = pl.scan_parquet(os.path.join(self.data_dir, "services.parquet"))
+        
+        # Generate batch split
         for file in self.download_data:
             filename = file["raw_file"]
-            df = pl.read_parquet(os.path.join(self.data_dir, filename))\
+            df = pl.scan_parquet(os.path.join(self.data_dir, filename))\
                 .select(["src_ip_zeek", "src_port_zeek", "dest_ip_zeek", "dest_port_zeek", "ts", "duration"])
 
             # Generate the batch masks
             batch_mask = self.generate_split_file(df)
             self.batch_mask[filename] = batch_mask
-
-            # Generate host and service maps
-            collectec_df = df
-            src_host = collectec_df.select("src_ip_zeek").unique().to_series()
-            dest_host = collectec_df.select("dest_ip_zeek").unique().to_series()
-            host_map.update(src_host)
-            host_map.update(dest_host)
-
-            src_services = collectec_df.select(["src_ip_zeek", "src_port_zeek"]).unique().rows()
-            dest_services = collectec_df.select(["dest_ip_zeek", "dest_port_zeek"]).unique().rows()
-            service_map.update(src_services)
-            service_map.update(dest_services)
-
-        # Save maps
-        print("Should have maps by now")
 
     def transform_data(self, data: Union[Data, HeteroData]) -> BaseData:
         for transform in self.transforms:
@@ -222,9 +249,29 @@ class UWF22(L.LightningDataModule):
     def expand_duration(self, df: pl.LazyFrame):
         if not self.account_for_duration:
             df = df.with_columns(
-                conn_status = "closing"
+                conn_status = pl.lit("closing")
             )
-            return df
+            return df        
+
+        def expand(x):
+            duration = x[0]
+            end_ts = x[1]
+            if duration is None:
+                return (None, [end_ts])
+            
+            start_ts = float(end_ts - duration)
+            
+            # Otherwise, determine how many adjustments will need to be made
+            all_ts = np.arange(start_ts, end_ts, self.bin_size)[:-1] # cut the last one (we already have the original event)
+            all_ts = np.append(all_ts, end_ts) # add the original event
+
+            open_conn_states = ["open" for _ in range(all_ts.size - 2)]
+            all_conn_states = ["started"] + open_conn_states + ["closing"]
+
+            return (all_conn_states, all_ts)
+        
+        collected_df = df.collect()
+        collected_df = collected_df.select(["duration", "ts"]).map_rows(expand, return_dtype=pl.List)
         
         df = df.with_columns(
             start_ts = pl.when(pl.col("duration").is_not_null())
@@ -262,13 +309,8 @@ class UWF22(L.LightningDataModule):
 
         return df
     
-    def bin_df(self, df: pl.LazyFrame, keyword_map = None) -> pl.LazyFrame:
+    def bin_df(self, df: pl.LazyFrame) -> pl.LazyFrame:
         df = self.expand_duration(df)
-
-        # Maps for each column are also created automatically
-        if keyword_map is None:
-            self.hostmap = OrderedSet([])
-            self.servicemap = OrderedSet([])
 
         # Make time relative
         df = df.with_columns(
@@ -285,55 +327,38 @@ class UWF22(L.LightningDataModule):
         df = df.filter(
             (pl.col("ts") >= self.from_time) & (pl.col("ts") < self.to_time)
         )
-        collected_df = df.collect()
-        if collected_df.is_empty():
-            return pl.LazyFrame([])
 
-        # Update keyword map
-        for col in self.keyword_map:
-            self.keyword_map[col].update(collected_df.select(col).fillna("None").unique()) # type: ignore
-        self.hostmap.update(collected_df.select("src_ip_zeek").fill_nan("None").unique()) # type: ignore
-        self.hostmap.update(collected_df.select("dest_ip_zeek").fill_nan("None").unique()) # type: ignore
+        # Merge with the service map
+        df = df\
+            .join(self.servicemap.with_row_index("src_service_id"),
+                left_on=["src_ip_zeek", "src_port_zeek"],
+                right_on=["host", "port"],
+                how="left",
+                suffix="source",
+                validate="m:1")\
+            .join(self.servicemap.with_row_index("dest_service_id"),
+                left_on=["dest_ip_zeek", "dest_port_zeek"],
+                right_on=["host", "port"],
+                how="left",
+                suffix="destination",
+                validate="m:1")
         
-        src_services = collected_df.select(
-            pl.concat_list("src_ip_zeek", "src_port_zeek").unique()
-        ).map_rows(lambda x: (x[0], x[1]))
-
-        dest_services = collected_df.select(
-            pl.concat_list("dest_ip_zeek", "dest_port_zeek").unique()
-        ).map_rows(lambda x: (x[0], x[1]))
-
-
-        self.servicemap.update(src_services) # type: ignore
-        self.servicemap.update(dest_services) # type: ignore
-
-        factorize_cols = ["service", "proto", "conn_state", "conn_status", "label_tactic"]
-
-        # Apply the keyword map
+        # Apply the enums
         df = df.with_columns(
             service = pl.col("service").cast(service_enum),
             proto = pl.col("proto").cast(proto_enum),
             conn_state = pl.col("conn_state").cast(conn_state_enum),
+            conn_status = pl.col("conn_status").cast(conn_status_enum),
             label_tactic = pl.col("label_tactic").cast(label_tactic_enum),
+            src_ip_zeek = pl.col("src_ip_zeek").cast(self.host_enum),
+            dest_ip_zeek = pl.col("dest_ip_zeek").cast(self.host_enum)
         )
-        for col in self.keyword_map:
-            df.with_columns(
-                pl.col(col).fill_nan("None")
-            )
-            df[col] = df[col].fillna("None").map(self.keyword_map[col].index)
-        df["src_ip_id"] = df["src_ip_zeek"].map(self.hostmap.index)
-        df["dest_ip_id"] = df["dest_ip_zeek"].map(self.hostmap.index)
-        df["src_service_id"] = df[["src_ip_zeek", "src_port_zeek"]] \
-                                .apply(lambda x: (x.iloc[0], x.iloc[1]), axis=1).map(self.servicemap.index)
-        df["dest_service_id"] = df[["dest_ip_zeek", "dest_port_zeek"]] \
-                                .apply(lambda x: (x.iloc[0], x.iloc[1]), axis=1).map(self.servicemap.index)
 
         # Bin the data
-        df.with_columns(
+        df = df.with_columns(
             bin = pl.col("ts") // self.bin_size
-        )
-        # Make bin relative
-        df.with_columns(
+        ).with_columns(
+            # Make bin relative
             bin = pl.col("bin") - pl.col("bin").min()
         )
         
@@ -343,15 +368,16 @@ class UWF22(L.LightningDataModule):
         previous_bin = starting_bin
         final_batch = []
         for bin, group in batch:
+            bin = bin[0]
             while bin - previous_bin > 1:
                 previous_bin += 1
-                final_batch.append(pd.DataFrame([], columns=columns, dtype="int64"))
+                final_batch.append(pl.DataFrame([], schema=columns))
 
             final_batch.append(group)
             previous_bin = bin
 
         while len(final_batch) < self.batch_size:
-            final_batch.append(pd.DataFrame([], columns=columns, dtype="int64"))
+            final_batch.append(pl.DataFrame([], schema=columns))
 
         return final_batch
         
@@ -359,38 +385,36 @@ class UWF22(L.LightningDataModule):
         for file in self.download_data:
             filename = os.path.join(self.data_dir, file["raw_file"])
             df = pl.scan_parquet(filename)
-            batch: list[pd.DataFrame] = []
+            batch: list[pl.LazyFrame] = []
             batch_mask = self.batch_mask[file["raw_file"]]
 
             df = self.bin_df(df)
             df = df.with_columns(
                 batch = pl.col("bin") // self.batch_size
             )
-            grouped_batches = df.group_by("batch")
+            grouped_batches = df.collect().group_by("batch")
 
             for batch, group in grouped_batches: # type: ignore
+                batch = batch[0]
                 bins = group.group_by("bin")
                 corrected_batch = self.fill_in_gaps_in_batch(bins, batch*self.batch_size, df.columns)
                 yield corrected_batch, int(batch_mask[int(batch)]) # type: ignore
 
     def df_to_data(self, df: pl.DataFrame):
-        hostmap_df = pl.DataFrame([
-            EnrichHost.enrich_host(host, id) for id, host in enumerate(self.hostmap)
-        ])
 
         data = Data()
-        data.time = df.select("ts").to_torch(dtype=pl.Float64)
-        data.x = hostmap_df.select([
+        data.time = df.select("ts").to_torch(dtype=pl.Float32)
+        data.x = self.hostmap.select([
                 "internal",
                 "broadcast",
                 "multicast",
                 "ipv4",
                 "ipv6",
                 "valid",
-        ]).to_torch(dtype=pl.Float64)
-        data.edge_index = df.select(["src_ip_id", "dest_ip_id"]).transpose().to_torch(dtype=pl.Int64)
+        ]).fill_null(0).to_torch(dtype=pl.Int64)
+        data.edge_index = df.select(pl.col("src_ip_zeek").to_physical(), pl.col("dest_ip_zeek").to_physical()).to_torch(dtype=pl.Int64).T
         data.edge_attr = df.select([
-                "conn_status",
+                pl.col("conn_status").to_physical(),
                 "src_port_zeek",
                 "dest_port_zeek",
                 "orig_bytes",
@@ -401,18 +425,18 @@ class UWF22(L.LightningDataModule):
                 "local_orig",
                 "local_resp",
                 "duration",
-                "proto",
-                "service",
-                "conn_state"
+                pl.col("proto").to_physical(),
+                pl.col("service").to_physical(),
+                pl.col("conn_state").to_physical()
                 # TODO: Add info about the port
                 # TODO: Add history
-        ]).fill_nan(0).to_torch(dtype=pl.Float64)
+        ]).fill_null(0).to_torch(dtype=pl.Float32)
         data.history = df.select([
                 "history"
                 # TODO: Add info about the port
                 # TODO: Add history
         ]).to_numpy()
-        data.y = df.select("label_tactic").to_torch(dtype=pl.Int64)
+        data.y = df.select(pl.col("label_tactic").to_physical()).to_torch(dtype=pl.Int64).flatten()
 
         return data
 
