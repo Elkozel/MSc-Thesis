@@ -1,16 +1,9 @@
 tqdm
 pandas
 polars
-Elasticsearch==8.17
-pymongo
 pyarrow
-randomname
 comet_ml
 lightning[extra]
-litmodels
 torchmetrics
-pytest
-networkx-temporal[draw]
-urllib3
 ordered-set
-transformers
+fsspec[http]>=2025.5.0

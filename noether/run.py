@@ -2,7 +2,6 @@ import comet_ml
 
 import argparse
 from comet_ml.integration.pytorch import log_model
-import litmodels
 import torch
 from pytorch_lightning.loggers import CometLogger
 from transforms.AddInOutDegree import AddInOutDegree
@@ -74,8 +73,8 @@ def main():
 
     if args.dataset == "UWF22":
         dataset = UWF22(args.dataset_folder,
-                         bin_size=5,
-                         batch_size=60,
+                         bin_size=10,
+                         batch_size=450,
                          account_for_duration=args.account_for_duration,
                          shuffle=args.shuffle,
                          shuffle_every_time=args.shuffle_every_time,
@@ -86,14 +85,14 @@ def main():
     elif args.dataset == "UWF22h":
         transformations = []
         dataset = UWF22H(args.dataset_folder,
-                         bin_size=20,
-                         batch_size=350,
+                         bin_size=10,
+                         batch_size=60,
                          transforms=transformations,
                          num_workers=args.num_workers)
     elif args.dataset == "UWF22Fall":
         dataset = UWF22Fall(args.dataset_folder,
-                         bin_size=20,
-                         batch_size=350,
+                         bin_size=10,
+                         batch_size=450,
                          account_for_duration=args.account_for_duration,
                          shuffle=args.shuffle,
                          shuffle_every_time=args.shuffle_every_time,
@@ -103,8 +102,8 @@ def main():
                          num_workers=args.num_workers)
     elif args.dataset == "UWF24":
         dataset = UWF24(args.dataset_folder,
-                         bin_size=20,
-                         batch_size=350,
+                         bin_size=10,
+                         batch_size=450,
                          account_for_duration=args.account_for_duration,
                          shuffle=args.shuffle,
                          shuffle_every_time=args.shuffle_every_time,
@@ -114,8 +113,8 @@ def main():
                          num_workers=args.num_workers)
     elif args.dataset == "UWF24Fall":
         dataset = UWF24Fall(args.dataset_folder,
-                         bin_size=20,
-                         batch_size=350,
+                         bin_size=10,
+                         batch_size=450,
                          account_for_duration=args.account_for_duration,
                          shuffle=args.shuffle,
                          shuffle_every_time=args.shuffle_every_time,

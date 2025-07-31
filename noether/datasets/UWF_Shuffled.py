@@ -32,8 +32,10 @@ class UWF22(datasets.UWF.UWF22):
         self.shuffle_bin_size = shuffle_bin_size
         self.shuffled_dataset_name = dataset_name
         self.shuffled_dataset_dir = os.path.join(data_dir, dataset_name)
+        
+        if self.shuffle:
+            self.ts_first_event = 0
 
-        self.ts_first_event = 0
 
     def database_to_df(self):
         dfs = []
