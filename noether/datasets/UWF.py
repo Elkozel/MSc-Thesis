@@ -97,7 +97,7 @@ class UWF22(L.LightningDataModule):
         self.save_hyperparameters()
         self.node_features = 6
         self.edge_features = 14
-        self.num_classes = 11
+        self.num_classes = 14
 
     
     def download_file(self, url, filepath, tqdm_pos=0):
