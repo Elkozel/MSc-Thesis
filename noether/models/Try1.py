@@ -90,7 +90,7 @@ class LitFullModel(L.LightningModule):
         rnn_num_layers = 1,
         binary_threshold = 0.5,
         negative_edge_sampling_min = 20,
-        pred_alpha = 0.8,
+        pred_alpha = 1.2,
         model_name="Try1"
     ):
         super().__init__()
@@ -244,7 +244,7 @@ class LitFullModel(L.LightningModule):
         # conf_weighted_class_loss = F.cross_entropy(link_class, edge_class_labels.long(), reduction='none')
         # conf_weighted_class_loss = (conf_weighted_class_loss * link_pred_probs.squeeze()).mean()
         
-        loss = class_loss
+        loss = pred_loss * self.pred_alpha +  class_loss
 
 
         # Metrics from link prediction
