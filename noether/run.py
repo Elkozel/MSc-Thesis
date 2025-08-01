@@ -73,10 +73,10 @@ def main():
 
     if args.dataset == "UWF22":
         dataset = UWF22(args.dataset_folder,
-                         bin_size=10,
-                         batch_size=450,
-                         account_for_duration=args.account_for_duration,
-                         shuffle=args.shuffle,
+                         bin_size=25,
+                         batch_size=150,
+                         account_for_duration=False,
+                         shuffle=False,
                          shuffle_every_time=args.shuffle_every_time,
                          shuffle_type=args.shuffle_type,
                          shuffle_bin_size=args.shuffle_bin_size,

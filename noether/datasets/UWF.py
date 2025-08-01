@@ -60,11 +60,11 @@ class UWF22(L.LightningDataModule):
         {
             "url": "https://datasets.uwf.edu/data/UWF-ZeekData22/parquet/2022-02-06%20-%202022-02-13/part-00000-df678a79-4a73-452b-8e72-d624b2732f17-c000.snappy.parquet",
             "raw_file": "6.parquet"
-        },
+        },        
         {
             "url": "https://datasets.uwf.edu/data/UWF-ZeekData22/parquet/2022-02-13%20-%202022-02-20/part-00000-1da06990-329c-4e38-913a-0f0aa39b388d-c000.snappy.parquet",
             "raw_file": "7.parquet"
-        }
+        },
     ]
     factorize_cols = ["service", "proto", "conn_state", "conn_status", "label_tactic"]
 
@@ -356,49 +356,36 @@ class UWF22(L.LightningDataModule):
 
         # Bin the data
         df = df.with_columns(
-            bin = pl.col("ts") // self.bin_size
+            bin = pl.col("ts") // self.bin_size,
         ).with_columns(
-            # Make bin relative
-            bin = pl.col("bin") - pl.col("bin").min()
+            batch_abs = pl.col("bin") // self.batch_size,
+        ).with_columns(
+            batch = pl.col("batch_abs") - pl.col("batch_abs").min()
         )
         
         return df
-
-    def fill_in_gaps_in_batch(self, batch, starting_bin, columns):
-        previous_bin = starting_bin
-        final_batch = []
-        for bin, group in batch:
-            bin = bin[0]
-            while bin - previous_bin > 1:
-                previous_bin += 1
-                final_batch.append(pl.DataFrame([], schema=columns))
-
-            final_batch.append(group)
-            previous_bin = bin
-
-        while len(final_batch) < self.batch_size:
-            final_batch.append(pl.DataFrame([], schema=columns))
-
-        return final_batch
         
     def generate_batches(self):
+        batch_offset = 0
         for file in self.download_data:
             filename = os.path.join(self.data_dir, file["raw_file"])
             df = pl.scan_parquet(filename)
-            batch: list[pl.LazyFrame] = []
-            batch_mask = self.batch_mask[file["raw_file"]]
+            batch_mask: torch.Tensor = self.batch_mask[file["raw_file"]]
 
             df = self.bin_df(df)
-            df = df.with_columns(
-                batch = pl.col("bin") // self.batch_size
-            )
-            grouped_batches = df.collect().group_by("batch")
+            collected_df = df.collect()
 
-            for batch, group in grouped_batches: # type: ignore
-                batch_num: int = int(batch[0]) # type: ignore
-                bins = group.group_by("bin")
-                corrected_batch = self.fill_in_gaps_in_batch(bins, batch_num*self.batch_size, df.columns)
-                yield corrected_batch, int(batch_mask[batch_num])
+            for batch_num in range(batch_mask.size(0)):
+                from_bin = (batch_num + batch_offset) * self.batch_size
+                to_bin = from_bin + self.batch_size
+                
+                final_batch = [
+                    collected_df.filter(pl.col("bin") == bin_num)
+                    for bin_num in range(from_bin, to_bin)
+                ]
+                yield final_batch, int(batch_mask[batch_num])
+
+            batch_offset += batch_mask.size(0)
 
     def df_to_data(self, df: pl.DataFrame):
 
@@ -411,7 +398,7 @@ class UWF22(L.LightningDataModule):
                 "ipv4",
                 "ipv6",
                 "valid",
-        ]).fill_null(0).to_torch(dtype=pl.Int64)
+        ]).fill_null(0).to_torch(dtype=pl.Int8)
         data.edge_index = df.select(pl.col("src_ip_zeek").to_physical(), pl.col("dest_ip_zeek").to_physical()).to_torch(dtype=pl.Int64).T
         data.edge_attr = df.select([
                 pl.col("conn_status").to_physical(),
@@ -436,7 +423,7 @@ class UWF22(L.LightningDataModule):
                 # TODO: Add info about the port
                 # TODO: Add history
         ]).to_numpy()
-        data.y = df.select(pl.col("label_tactic").to_physical()).to_torch(dtype=pl.Int64).flatten()
+        data.y = df.select(pl.col("label_tactic").to_physical()).to_torch(dtype=pl.Int8).flatten()
 
         return data
 

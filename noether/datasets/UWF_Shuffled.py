@@ -37,7 +37,7 @@ class UWF22(datasets.UWF.UWF22):
             self.ts_first_event = 0
 
 
-    def database_to_df(self):
+    def dataset_to_df(self):
         dfs = []
 
         for file in self.download_data:
@@ -60,7 +60,7 @@ class UWF22(datasets.UWF.UWF22):
         if not self.is_already_shuffled() and force == False:
             return
         
-        df = self.database_to_df()
+        df = self.dataset_to_df()
         df = self.shuffle_fn(df)
 
         # Split the dataframe into parts
