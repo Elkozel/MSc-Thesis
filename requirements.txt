@@ -5,4 +5,4 @@ comet_ml
 lightning[extra]
 torchmetrics
 ordered-set
-fsspec[http]>=2025.5.0
+fsspec[http]>=2025.7.0
