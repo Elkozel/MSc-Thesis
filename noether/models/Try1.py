@@ -90,7 +90,7 @@ class LitFullModel(L.LightningModule):
         rnn_num_layers = 1,
         binary_threshold = 0.5,
         negative_edge_sampling_min = 20,
-        pred_alpha = 0.8,
+        pred_alpha = 1.2,
         model_name="Try1"
     ):
         super().__init__()
@@ -107,6 +107,7 @@ class LitFullModel(L.LightningModule):
             "pred_f1": torchmetrics.F1Score(task="binary"),
             "pred_ap": torchmetrics.AveragePrecision(task="binary")
         })
+        self.link_pred_stat_scores = torchmetrics.StatScores(task="binary")
 
         self.link_class_metrics = nn.ModuleDict({
             "class_acc": torchmetrics.Accuracy(task="multiclass", num_classes=out_classes),
@@ -222,7 +223,7 @@ class LitFullModel(L.LightningModule):
         edge_class_labels = torch.cat([
             data.y[edge_batch >= self.rnn_window_size],
             torch.zeros(negative_edges.size(1)).to(self.device)
-        ])
+        ]).to(self.device)
 
         # Run the full decoding with the batch
         src = test_edges[0]
@@ -237,14 +238,14 @@ class LitFullModel(L.LightningModule):
         pred_loss = F.binary_cross_entropy_with_logits(link_pred_logits, edge_pred_labels.float())
         weights = torch.nn.functional.normalize(torch.Tensor([1] + [
             3 for _ in range(self.out_classes - 1)
-        ]), dim=0)
+        ]), dim=0).to(self.device)
         class_loss = F.cross_entropy(link_class, edge_class_labels.long(), weight=weights)
 
         # Confidence loss
         # conf_weighted_class_loss = F.cross_entropy(link_class, edge_class_labels.long(), reduction='none')
         # conf_weighted_class_loss = (conf_weighted_class_loss * link_pred_probs.squeeze()).mean()
         
-        loss = class_loss
+        loss = pred_loss * self.pred_alpha +  class_loss
 
 
         # Metrics from link prediction
@@ -308,19 +309,33 @@ class LitFullModel(L.LightningModule):
         for metric in metrics.values():
             metric.reset()
 
-        tp, fp, tn, fn, sup = self.mal_stat_scores((torch.argmax(link_class, dim=1) > 0.5).float(), malicious_event_mask)
+        tp_mal, fp_mal, tn_mal, fn_mal, sup_mal = self.mal_stat_scores((torch.argmax(link_class, dim=1) > 0.5).float(), malicious_event_mask)
+        mal_stat_results = {
+            "mal_tp": tp_mal.float(),
+            "mal_fp": fp_mal.float(),
+            "mal_tn": tn_mal.float(),
+            "mal_fn": fn_mal.float(),
+            "mal_sup": sup_mal.float(),
+        }
+        tp_pred, fp_pred, tn_pred, fn_pred, sup_pred = self.link_pred_stat_scores(link_pred_logits, edge_pred_labels.int())
+        pred_stat_results = {
+            "pred_tp": tp_pred.float(),
+            "pred_fp": fp_pred.float(),
+            "pred_tn": tn_pred.float(),
+            "pred_fn": fn_pred.float(),
+            "pred_sup": sup_pred.float(),
+        }
+
         self.mal_stat_scores.reset()
+        self.link_pred_stat_scores.reset()
 
         return {
             "loss": loss,
             "mal_count": data.y.count_nonzero().float(),
             "benign_count": data.y.size(0) - int(data.y.count_nonzero()),
-            "true_positives": tp.float(),
-            "false_positives": fp.float(),
-            "true_negatives": tn.float(),
-            "false_negatives": fn.float(),
-            "support": sup.float(),
             "edge_count": positive_edges.size(1),
+            **mal_stat_results,
+            **pred_stat_results,
             **matric_results
         }
     

@@ -360,7 +360,7 @@ class UWF22(L.LightningDataModule):
             filename = os.path.join(self.data_dir, file["raw_file"])
             df = pl.scan_parquet(filename)
             batch: list[pd.DataFrame] = []
-            batch_mask = self.batch_mask[file["raw_file"]]
+            batch_mask: torch.Tensor = self.batch_mask[file["raw_file"]]
 
             df = self.bin_df(df)
             df = df.with_columns(
