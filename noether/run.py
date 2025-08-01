@@ -26,14 +26,14 @@ def parse_args():
     parser.add_argument('--model', type=str, choices=["try0", 'try1', 'try2', 'try2h', 'try3'],
                         help="Model type to use", default="try2")
     parser.add_argument('--dataset', type=str, choices=["UWF22", "UWF22h", "UWF22Fall", "UWF24", "UWF24Fall", 'LANL'],
-                        help="Dataset to use", default="UWF22")
+                        help="Dataset to use", default="LANL")
     parser.add_argument('--account-for-duration', action=argparse.BooleanOptionalAction,
                         help="Whether extra records should be added to account for connections, which are bigger \
                             than the bin size", default=True)
     parser.add_argument('--shuffle', action=argparse.BooleanOptionalAction,
                         help="Whether the dataset should be shuffled", default=True)
     parser.add_argument('--shuffle-type', type=str, choices=["day", "random"],
-                        help="The type of shuffling to be applied", default="day")
+                        help="The type of shuffling to be applied", default="random")
     parser.add_argument('--shuffle-bin-size', type=float, default=0.1,
                         help="The size of the bins used during the shuffling process")
     parser.add_argument('--shuffle-every-time', action=argparse.BooleanOptionalAction,
@@ -73,10 +73,10 @@ def main():
 
     if args.dataset == "UWF22":
         dataset = UWF22(args.dataset_folder,
-                         bin_size=25,
-                         batch_size=150,
+                         bin_size=20,
+                         batch_size=45,
                          account_for_duration=False,
-                         shuffle=False,
+                         shuffle=args.shuffle,
                          shuffle_every_time=args.shuffle_every_time,
                          shuffle_type=args.shuffle_type,
                          shuffle_bin_size=args.shuffle_bin_size,
