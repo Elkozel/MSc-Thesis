@@ -64,7 +64,7 @@ class UWF22(L.LightningDataModule):
         {
             "url": "https://datasets.uwf.edu/data/UWF-ZeekData22/parquet/2022-02-13%20-%202022-02-20/part-00000-1da06990-329c-4e38-913a-0f0aa39b388d-c000.snappy.parquet",
             "raw_file": "7.parquet"
-        },
+        }
     ]
     factorize_cols = ["service", "proto", "conn_state", "conn_status", "label_tactic"]
 
@@ -199,14 +199,14 @@ class UWF22(L.LightningDataModule):
             return torch.empty(0)
 
         # Calculate bins
-        from_bin = collected_df.select(pl.min("ts")).item() // self.bin_size
-        to_bin = collected_df.select(pl.max("ts")).item() // self.bin_size
-        from_batch = from_bin // self.batch_size
-        to_batch = to_bin // self.batch_size
+        collected_df = collected_df.with_columns(
+            batch = pl.col("ts") // self.bin_size // self.batch_size
+        )
+        batches = collected_df.select("batch").unique().to_series()
+        num_batches = batches.len()
 
         # Randomly split the indices into training (60%), validation (25%), and test (15%) sets
         generator = torch.Generator().manual_seed(42)
-        num_batches = int(to_batch - from_batch + 1)
 
         # Create full batch index tensor for this file
         full_idx = torch.arange(num_batches)
@@ -358,15 +358,14 @@ class UWF22(L.LightningDataModule):
         df = df.with_columns(
             bin = pl.col("ts") // self.bin_size,
         ).with_columns(
-            batch_abs = pl.col("bin") // self.batch_size,
+            batch = pl.col("bin") // self.batch_size,
         ).with_columns(
-            batch = pl.col("batch_abs") - pl.col("batch_abs").min()
+            bin = pl.col("bin") % self.batch_size
         )
         
         return df
         
     def generate_batches(self):
-        batch_offset = 0
         for file in self.download_data:
             filename = os.path.join(self.data_dir, file["raw_file"])
             df = pl.scan_parquet(filename)
@@ -374,18 +373,17 @@ class UWF22(L.LightningDataModule):
 
             df = self.bin_df(df)
             collected_df = df.collect()
+            batches = collected_df.select("batch").unique().to_series()
 
             for batch_num in range(batch_mask.size(0)):
-                from_bin = (batch_num + batch_offset) * self.batch_size
-                to_bin = from_bin + self.batch_size
+                batch = collected_df.filter(pl.col("batch") == batches[batch_num])
+                batch_stage = batch_mask[batch_num].item()
                 
                 final_batch = [
-                    collected_df.filter(pl.col("bin") == bin_num)
-                    for bin_num in range(from_bin, to_bin)
+                    batch.filter(pl.col("bin") == bin_num)
+                    for bin_num in range(self.batch_size)
                 ]
-                yield final_batch, int(batch_mask[batch_num])
-
-            batch_offset += batch_mask.size(0)
+                yield final_batch, batch_stage
 
     def df_to_data(self, df: pl.DataFrame):
 
