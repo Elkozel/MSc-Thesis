@@ -1,16 +1,12 @@
 from multiprocessing.pool import ThreadPool
 import os
-import inspect
-import math
 import logging
-from typing import Any, Callable, Generator, List, Literal, Optional, Union
+from typing import Literal, Union
 import requests
 import torch
 import numpy as np
 from tqdm.auto import tqdm
-import pandas as pd
 import polars as pl
-from ordered_set import OrderedSet
 from torch.utils.data import DataLoader
 from torch.utils.data import random_split, TensorDataset
 from torch_geometric.data import Data, HeteroData
