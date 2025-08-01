@@ -202,7 +202,8 @@ class LitFullModel(L.LightningModule):
         # Create positive and negative edge indecies
         edge_sources = data.edge_index[0]
         edge_batch = data.batch[edge_sources]
-        positive_edges = data.edge_index[:, edge_batch >= self.rnn_window_size] # Only grab edges from 
+        positive_edges = data.edge_index[:, edge_batch >= self.rnn_window_size] # Only grab edges after the starting window
+                                                                                # Other edges are not relevant
 
         if positive_edges.size(1) == 0:
             raise NoPositiveEdgesException(f"Positive edges are {positive_edges.size(1)}")
