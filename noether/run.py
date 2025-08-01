@@ -31,7 +31,7 @@ def parse_args():
                         help="Whether extra records should be added to account for connections, which are bigger \
                             than the bin size", default=True)
     parser.add_argument('--shuffle', action=argparse.BooleanOptionalAction,
-                        help="Whether the dataset should be shuffled", default=True)
+                        help="Whether the dataset should be shuffled", default=False)
     parser.add_argument('--shuffle-type', type=str, choices=["day", "random"],
                         help="The type of shuffling to be applied", default="day")
     parser.add_argument('--shuffle-bin-size', type=float, default=0.1,
