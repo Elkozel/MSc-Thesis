@@ -203,7 +203,9 @@ class LitFullModel(L.LightningModule):
         # Create positive and negative edge indecies
         edge_sources = data.edge_index[0]
         edge_batch = data.batch[edge_sources]
-        positive_edges = data.edge_index[:, edge_batch >= self.rnn_window_size] # Only grab edges from 
+        positive_edges = data.edge_index[:, edge_batch >= self.rnn_window_size] # Only grab edges after the starting window
+                                                                                # Other edges are not relevant
+        positive_edge_labels = data.y[edge_batch >= self.rnn_window_size]
 
         if positive_edges.size(1) == 0:
             raise NoPositiveEdgesException(f"Positive edges are {positive_edges.size(1)}")
@@ -217,11 +219,11 @@ class LitFullModel(L.LightningModule):
             negative_edges.int()
         ], dim=1)
         edge_pred_labels = torch.cat([
-            torch.ones(positive_edges.size(1)),
+            (positive_edge_labels == 0).int(),
             torch.zeros(negative_edges.size(1))
         ]).to(self.device)
         edge_class_labels = torch.cat([
-            data.y[edge_batch >= self.rnn_window_size],
+            positive_edge_labels,
             torch.zeros(negative_edges.size(1)).to(self.device)
         ]).to(self.device)
 
@@ -236,9 +238,9 @@ class LitFullModel(L.LightningModule):
 
         # Calculate loss
         pred_loss = F.binary_cross_entropy_with_logits(link_pred_logits, edge_pred_labels.float())
-        weights = torch.nn.functional.normalize(torch.Tensor([1] + [
-            3 for _ in range(self.out_classes - 1)
-        ]), dim=0).to(self.device)
+        weights = torch.Tensor([1] + [
+            5 for _ in range(self.out_classes - 1)
+        ]).to(self.device)
         class_loss = F.cross_entropy(link_class, edge_class_labels.long(), weight=weights)
 
         # Confidence loss

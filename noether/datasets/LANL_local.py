@@ -8,7 +8,7 @@ from typing import Any, Generator, Literal, Optional, Union
 import requests
 import torch
 from tqdm import tqdm
-import pandas as pd
+import polars as pl
 from ordered_set import OrderedSet
 from torch.utils.data import random_split, TensorDataset
 from torch_geometric.data import Data, HeteroData
@@ -30,6 +30,7 @@ class LANLL(L.LightningDataModule):
                  to_time: int = 1209600, # First 14 days
                  lanl_URL: Optional[str] = None,
                  transforms: list = [],
+                 batch_split: list = [0.6, 0.25, 0.15],
                  dataset_name: str = "LANL"):
         super().__init__()
         self.data_dir = os.path.join(data_dir, dataset_name)
@@ -38,6 +39,7 @@ class LANLL(L.LightningDataModule):
         self.to_time = to_time
         self.batch_size = batch_size
         self.transforms = transforms
+        self.batch_split = batch_split
         self.dataset_name = dataset_name
         self.edge_features = 4
         self.node_features = 0
@@ -45,10 +47,14 @@ class LANLL(L.LightningDataModule):
 
         self.save_hyperparameters()
 
-        self.auth_file = {}
-        self.auth_file["file"] = os.path.join(self.data_dir, "auth.txt.gz")
-        self.redteam_file = {}
-        self.redteam_file["file"] = os.path.join(self.data_dir, "redteam.txt.gz")
+        self.auth_file = {
+            "csv": os.path.join(self.data_dir, "auth.txt.gz"),
+            "parquet": os.path.join(self.data_dir, "auth.parquet")
+        }
+        self.redteam_file = {
+            "csv": os.path.join(self.data_dir, "redteam.txt.gz"),
+            "parquet": os.path.join(self.data_dir, "redteam.parquet")
+        }
         
         if lanl_URL is not None:
             self.auth_file["url"] =  os.path.join(lanl_URL, "auth.txt.gz")
@@ -105,33 +111,125 @@ class LANLL(L.LightningDataModule):
             # Use map to apply download_file to all argument tuples in parallel
             pool.map(lambda x: self.download_file(*x), args)
 
-    def prepare_data(self):
-        self.download_all_files()
+    def csv_to_parquet(self):
+        if not os.path.exists(self.redteam_file["parquet"]):
+            redteam_header = [
+                "time",
+                "user@domain",
+                "source computer",
+                "destination computer"
+            ]
+            pl.scan_csv(self.redteam_file["csv"],
+                        has_header=False,
+                        new_columns=redteam_header)\
+            .sink_parquet(
+                self.redteam_file["parquet"],
+                row_group_size=500_000
+            )
+        if not os.path.exists(self.auth_file["parquet"]):
+            columns = [
+                'time',
+                'source user@domain',
+                'destination user@domain',
+                'source computer',
+                'destination computer',
+                'authentication type',
+                'logon type',
+                'authentication orientation',
+                'success/failure'
+            ]
+            pl.scan_csv(self.auth_file["csv"],
+                        has_header=False,
+                        new_columns=columns)\
+            .sink_parquet( 
+                self.auth_file["parquet"],
+                row_group_size=1_000_000
+            )
+    
+    def generate_maps(self):
+        # Check if the maps are already generated
+        if os.path.exists(os.path.join(self.data_dir, "users.parquet")) and \
+            os.path.exists(os.path.join(self.data_dir, "hosts.parquet")):
+            return  # If so, skip
+        
+        auth = pl.scan_parquet(self.auth_file["parquet"])
 
-    def generate_split(self):
+        collected_auth = auth.select(
+            "source computer",
+            "destination computer",
+            "source user@domain",
+            "destination user@domain"
+        ).collect()
+        
+        source_hosts = collected_auth\
+            .select("source computer")\
+            .unique().to_series()
+        destination_hosts = collected_auth\
+            .select("destination computer")\
+            .unique().to_series()
+        hosts = pl.concat([source_hosts, destination_hosts]).unique()
+
+        source_users = collected_auth\
+            .select("source user@domain")\
+            .unique().to_series()
+        destination_users = collected_auth\
+            .select("destination user@domain")\
+            .unique().to_series()
+        users = pl.concat([source_users, destination_users]).unique()
+
+        hostmap = hosts.to_frame("host").write_parquet(os.path.join(self.data_dir, "hosts.parquet"))
+        usermap = users.to_frame("user").write_parquet(os.path.join(self.data_dir, "users.parquet"))
+
+    def prepare_data(self):
+        with tqdm(total=3) as pbar:
+            pbar.set_description("Downloading files")
+            self.download_all_files()
+            pbar.update(1)
+            pbar.set_description("Converting to parquet")
+            self.csv_to_parquet()
+            pbar.update(1)
+            pbar.set_description("Generating maps")
+            self.generate_maps()
+            pbar.update(1)
+
+    def generate_split(self, df: pl.LazyFrame) -> torch.Tensor:        
+        # Filter only the timestamps we care about
+        df = df.filter(
+            (pl.col("time") >= self.from_time) & (pl.col("time") < self.to_time)
+        )
+        # Calculate bins
+        df = df.with_columns(
+            batch = pl.col("time") // self.bin_size // self.batch_size
+        ).select("batch")
+
+        collected_df = df.collect()
+        if collected_df.is_empty():
+            return torch.empty(0)
+
+        batches = collected_df.select("batch").unique().to_series()
+        num_batches = batches.len()
+
         # Randomly split the indices into training (60%), validation (25%), and test (15%) sets
         generator = torch.Generator().manual_seed(42)
-        from_bin = (self.from_time // self.bin_size) * self.bin_size
-        to_bin = (self.to_time // self.bin_size) * self.bin_size
-        bin_range = range(from_bin, to_bin, self.bin_size)
-        num_batches = math.ceil(len(bin_range) / self.batch_size)
 
         # Create full batch index tensor for this file
         full_idx = torch.arange(num_batches)
         idx = TensorDataset(full_idx)
 
-        _, val, test = random_split(idx, [0.6, 0.25, 0.15], generator=generator)
+        _, val, test = random_split(idx, self.batch_split, generator=generator)
 
         # Create mask: 0 = train, 1 = val, 2 = test
-        self.batch_mask = torch.zeros(num_batches, dtype=torch.uint8)
-        self.batch_mask[val.indices] = 1
-        self.batch_mask[test.indices] = 2
+        batch_mask = torch.zeros(num_batches, dtype=torch.uint8)
+        batch_mask[val.indices] = 1
+        batch_mask[test.indices] = 2
 
-        return self.batch_mask
+        return batch_mask
         
     def setup(self, stage: str):
+        df = pl.scan_parquet(self.auth_file["parquet"])
+
         # Generate the batch masks
-        self.generate_split()
+        df = self.generate_split(df)
 
         # Load redteam
         redteam_header = [
@@ -140,40 +238,61 @@ class LANLL(L.LightningDataModule):
             "source computer",
             "destination computer"
         ]
-        self.redteam = pd.read_csv(
-            self.redteam_file["file"], 
-            sep=',', 
-            compression='gzip',
-            names=redteam_header, 
-            header=None).drop_duplicates()
+        self.redteam = pl.scan_csv(
+            self.redteam_file["file"],
+            separator=",",
+            new_columns=redteam_header,
+            has_header=False).with_columns(
+                malicious = pl.lit(True)
+            )
+        
+        self.hostmap = pl.read_parquet(os.path.join(self.data_dir, "hosts.parquet"))
+        self.hostenum = pl.Enum(self.hostmap.to_series())
+        self.usermap = pl.read_parquet(os.path.join(self.data_dir, "users.parquet"))
+        self.userenum = pl.Enum(self.usermap.to_series())
 
     def transform_data(self, data: Union[Data, HeteroData]) -> BaseData:
         for transform in self.transforms:
             data = transform(data)
         return data
     
-    def generate_bins(self) -> Generator[pd.DataFrame, Any, None]:
-        leftover = pd.DataFrame([])
-        columns = [
-            'time',
-            'source user@domain',
-            'destination user@domain',
-            'source computer',
-            'destination computer',
-            'authentication type',
-            'logon type',
-            'authentication orientation',
-            'success/failure'
-        ]
-        # Maps for each column are also created automatically
-        self.keyword_map = {col: OrderedSet([]) for col in columns if col != 'time'}
-        self.keyword_map.pop("source computer", None)
-        self.keyword_map.pop("destination computer", None)
-        self.hostmap = OrderedSet([])
+    def generate_bins(self, df: pl.LazyFrame) -> pl.LazyFrame:
+        # Find only the time which is of interest
+        df = df.filter(
+            (pl.col("time") >= self.from_time) & (pl.col("time") < self.to_time)
+        )
 
-        self.keyword_map.pop("source user@domain", None)
-        self.keyword_map.pop("destination user@domain", None)
-        self.usermap = OrderedSet([])
+        # Apply the enums
+        df = df.with_columns(
+            pl.col("source user@domain").cast(self.userenum).alias("source user@domain"),
+            pl.col("destination user@domain").cast(self.userenum).alias("destination user@domain"),
+            pl.col("source computer").cast(self.hostenum).alias("source computer"),
+            pl.col("destination computer").cast(self.hostenum).alias("destination computer"),
+
+            pl.col("authentication type").cast(self.hostenum).alias("authentication type"),
+            pl.col("logon type").cast(self.hostenum).alias("logon type"),
+            pl.col("authentication orientation").cast(self.hostenum).alias("authentication orientation"),
+            pl.col("success/failure").cast(self.hostenum).alias("success/failure"),
+        )
+
+        # Ensure 'time' is 
+        df.with_columns(
+            time = pl.col("time").cast(pl.Float32).drop_nans()
+        )
+
+        # Merge with redteam
+        df = self.merge_with_redteam(df)
+
+        # Create bins and batches
+        df = df.with_columns(
+            bin = pl.col("time") // self.bin_size,
+        ).with_columns(
+            batch = pl.col("bin") // self.batch_size,
+        ).with_columns(
+            bin = pl.col("bin") % self.batch_size
+        )
+
+        return df
 
         # Read the CSV file in chunks
         for part in pd.read_csv(
@@ -184,11 +303,6 @@ class LANLL(L.LightningDataModule):
             iterator=True, 
             names=columns, 
             header=None):
-
-            # Ensure 'time' is numeric
-            part['time'] = pd.to_numeric(part['time'], errors='coerce')
-            part.dropna(subset=['time'], inplace=True)
-            part.sort_values(by='time', inplace=True)
 
             # Skip until the start time has been reached
             if part["time"].max() < self.from_time:
@@ -263,29 +377,25 @@ class LANLL(L.LightningDataModule):
         if len(batch) > 0:
             yield batch, int(self.batch_mask[batch_num])
     
-    def merge_with_redteam(self, df: pd.DataFrame):
+    def merge_with_redteam(self, df: pl.LazyFrame) -> pl.LazyFrame:
         
         # First, do a merge on source_user
-        merge_source = pd.merge(
-            df,
+        merge_source = df.join(
             self.redteam,
             left_on=['time', 'source user@domain', 'source computer', 'destination computer'],
             right_on=['time', 'user@domain', 'source computer', 'destination computer'],
             how='left',
-            validate='many_to_one',
-            indicator='source_match'
-        )[["source_match"]].reset_index(drop=True)
+            validate='m:1'
+        )
 
         # Then, do a merge on destination_user
-        merge_dest = pd.merge(
-            df,
+        merge_dest = df.join(
             self.redteam,
             left_on=['time', 'destination user@domain', 'source computer', 'destination computer'],
             right_on=['time', 'user@domain', 'source computer', 'destination computer'],
             how='left',
-            validate='many_to_one',
-            indicator='dest_match'
-        )[["dest_match"]].reset_index(drop=True)
+            validate='m:1'
+        )
 
         # Add flags
         merge_source['source_malicious'] = merge_source['source_match'] == 'both'
@@ -297,7 +407,7 @@ class LANLL(L.LightningDataModule):
 
         return df
 
-    def df_to_data(self, df: pd.DataFrame):
+    def df_to_data(self, df: pl.LazyFrame):
         data = Data()
         data.time = torch.from_numpy(df["time"].to_numpy(dtype=float)).to(dtype=torch.float64)
         data.x = torch.zeros((len(self.hostmap), 0))

@@ -3,6 +3,7 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 from tqdm.auto import tqdm
+import polars as pl
 import datasets.UWF
 
 class UWF22(datasets.UWF.UWF22):
@@ -36,7 +37,7 @@ class UWF22(datasets.UWF.UWF22):
             self.ts_first_event = 0
 
 
-    def database_to_df(self):
+    def dataset_to_df(self):
         dfs = []
 
         for file in self.download_data:
@@ -59,7 +60,7 @@ class UWF22(datasets.UWF.UWF22):
         if not self.is_already_shuffled() and force == False:
             return
         
-        df = self.database_to_df()
+        df = self.dataset_to_df()
         df = self.shuffle_fn(df)
 
         # Split the dataframe into parts
@@ -119,9 +120,15 @@ class UWF22(datasets.UWF.UWF22):
         if self.shuffle:
             # Check if shuffle is needed
             self.shuffle_dataset(self.shuffle_every_time)
+            # Copy the service and host maps
+            pl.read_parquet(os.path.join(self.data_dir, "services.parquet"))\
+                .write_parquet(os.path.join(self.shuffled_dataset_dir, "services.parquet"))
+            pl.read_parquet(os.path.join(self.data_dir, "hosts.parquet"))\
+                .write_parquet(os.path.join(self.shuffled_dataset_dir, "hosts.parquet"))
             # Set the new dataset dir
             self.data_dir = self.shuffled_dataset_dir
             self.dataset_name = self.shuffled_dataset_name
+
 
 
 class UWF22Fall(datasets.UWF.UWF22Fall):
