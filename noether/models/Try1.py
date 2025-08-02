@@ -97,7 +97,7 @@ class LitFullModel(L.LightningModule):
 
 
         self.gnn = GNNEncoder(in_channels, hidden_channels)
-        self.rnn = RNNEncoder(hidden_channels)
+        self.rnn = RNNEncoder(hidden_channels, rnn_num_layers)
         self.link_pred = MLPDecoder(hidden_channels, 1)
         self.link_classifier = LinkTypeClassifier(hidden_channels, out_classes)
 
@@ -252,12 +252,6 @@ class LitFullModel(L.LightningModule):
 
         # Metrics from link prediction
         for name, metric in self.link_pred_metrics.items():
-            # If you give the AUROC metrics only true labels, 
-            # it compains
-            if name.endswith("_auc") or name.endswith("_ap"):
-                # So we skip when only true labels are present
-                if edge_class_labels.sum() == 0:
-                    continue
             metric(link_pred_logits, edge_pred_labels.int())
 
         # Metrics from link classification
