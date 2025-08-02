@@ -26,10 +26,10 @@ def parse_args():
     parser.add_argument('--model', type=str, choices=["try0", 'try1', 'try2', 'try2h', 'try3'],
                         help="Model type to use", default="try2")
     parser.add_argument('--dataset', type=str, choices=["UWF22", "UWF22h", "UWF22Fall", "UWF24", "UWF24Fall", 'LANL'],
-                        help="Dataset to use", default="LANL")
+                        help="Dataset to use", default="UWF22")
     parser.add_argument('--account-for-duration', action=argparse.BooleanOptionalAction,
                         help="Whether extra records should be added to account for connections, which are bigger \
-                            than the bin size", default=True)
+                            than the bin size", default=False)
     parser.add_argument('--shuffle', action=argparse.BooleanOptionalAction,
                         help="Whether the dataset should be shuffled", default=False)
     parser.add_argument('--shuffle-type', type=str, choices=["day", "random"],
@@ -37,7 +37,7 @@ def parse_args():
     parser.add_argument('--shuffle-bin-size', type=float, default=0.1,
                         help="The size of the bins used during the shuffling process")
     parser.add_argument('--shuffle-every-time', action=argparse.BooleanOptionalAction,
-                        help="Whether to reshuffle the dataset if it has already been shuffled previously", default=False)
+                        help="Whether to reshuffle the dataset if it has already been shuffled previously", default=True)
 
     parser.add_argument('--max-epochs', type=int, default=50,
                         help="Maximum number of training epochs")
@@ -73,9 +73,9 @@ def main():
 
     if args.dataset == "UWF22":
         dataset = UWF22(args.dataset_folder,
-                         bin_size=20,
-                         batch_size=45,
-                         account_for_duration=False,
+                         bin_size=10,
+                         batch_size=450,
+                         account_for_duration=args.account_for_duration,
                          shuffle=args.shuffle,
                          shuffle_every_time=args.shuffle_every_time,
                          shuffle_type=args.shuffle_type,
@@ -132,6 +132,7 @@ def main():
             args.dataset_folder,
             bin_size=20,
             batch_size=100,
+            lanl_URL="https://csr.lanl.gov/data-fence/1754169558/LJLbi4Mzkx-9QNYWlGpnnBuzR5k=/cyber1/",
             transforms=transformations)
     else:
         raise NotImplementedError(f"Dataset {args.dataset} is not implemented")
