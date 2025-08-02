@@ -55,7 +55,7 @@ class LANLL(L.LightningDataModule):
         self.save_hyperparameters()
 
         self.auth_file = {
-            "csv": os.path.join(self.data_dir, "auth.txt"),
+            "csv": os.path.join(self.data_dir, "auth.txt.gz"),
             "parquet": os.path.join(self.data_dir, "auth.parquet")
         }
         self.redteam_file = {
