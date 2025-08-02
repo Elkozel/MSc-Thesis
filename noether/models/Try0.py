@@ -80,9 +80,10 @@ class LitFullModel(Try1):
         binary_threshold = 0.5,
         negative_edge_sampling_min = 20,
         pred_alpha = 0.8,
+        link_pred_only = False,
         model_name="Try0"
     ):
-        super().__init__(in_channels, hidden_channels, dropout_rate, out_classes, rnn_window_size, rnn_num_layers, binary_threshold, negative_edge_sampling_min, pred_alpha, model_name)
+        super().__init__(in_channels, hidden_channels, dropout_rate, out_classes, rnn_window_size, rnn_num_layers, binary_threshold, negative_edge_sampling_min, pred_alpha, link_pred_only, model_name)
 
 
         self.gnn = GNNEncoder(in_channels, hidden_channels)
