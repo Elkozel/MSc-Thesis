@@ -222,7 +222,7 @@ class LitFullModel(L.LightningModule):
         ], dim=1)
         edge_pred_labels = torch.cat([
             (positive_edge_labels == 0).int(),
-            torch.zeros(negative_edges.size(1))
+            torch.zeros(negative_edges.size(1)).to(self.device)
         ]).to(self.device)
         edge_class_labels = torch.cat([
             positive_edge_labels,
