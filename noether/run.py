@@ -27,6 +27,10 @@ def parse_args():
                         help="Model type to use", default="try2")
     parser.add_argument('--dataset', type=str, choices=["UWF22", "UWF22h", "UWF22Fall", "UWF24", "UWF24Fall", 'LANL'],
                         help="Dataset to use", default="UWF22")
+    parser.add_argument('--bin-size', type=int, default=10,
+                        help="The size of bins used during training")
+    parser.add_argument('--batch-size', type=int, default=450,
+                        help="The size of batches used during training")
     parser.add_argument('--account-for-duration', action=argparse.BooleanOptionalAction,
                         help="Whether extra records should be added to account for connections, which are bigger \
                             than the bin size", default=False)
@@ -75,8 +79,8 @@ def main():
 
     if args.dataset == "UWF22":
         dataset = UWF22(args.dataset_folder,
-                         bin_size=10,
-                         batch_size=450,
+                         bin_size=args.bin_size,
+                         batch_size=args.batch_size,
                          account_for_duration=args.account_for_duration,
                          shuffle=args.shuffle,
                          shuffle_every_time=args.shuffle_every_time,
@@ -87,14 +91,14 @@ def main():
     elif args.dataset == "UWF22h":
         transformations = []
         dataset = UWF22H(args.dataset_folder,
-                         bin_size=10,
-                         batch_size=60,
+                         bin_size=args.bin_size,
+                         batch_size=args.batch_size,
                          transforms=transformations,
                          num_workers=args.num_workers)
     elif args.dataset == "UWF22Fall":
         dataset = UWF22Fall(args.dataset_folder,
-                         bin_size=10,
-                         batch_size=450,
+                         bin_size=args.bin_size,
+                         batch_size=args.batch_size,
                          account_for_duration=args.account_for_duration,
                          shuffle=args.shuffle,
                          shuffle_every_time=args.shuffle_every_time,
@@ -104,8 +108,8 @@ def main():
                          num_workers=args.num_workers)
     elif args.dataset == "UWF24":
         dataset = UWF24(args.dataset_folder,
-                         bin_size=10,
-                         batch_size=450,
+                         bin_size=args.bin_size,
+                         batch_size=args.batch_size,
                          account_for_duration=args.account_for_duration,
                          shuffle=args.shuffle,
                          shuffle_every_time=args.shuffle_every_time,
@@ -115,8 +119,8 @@ def main():
                          num_workers=args.num_workers)
     elif args.dataset == "UWF24Fall":
         dataset = UWF24Fall(args.dataset_folder,
-                         bin_size=10,
-                         batch_size=450,
+                         bin_size=args.bin_size,
+                         batch_size=args.batch_size,
                          account_for_duration=args.account_for_duration,
                          shuffle=args.shuffle,
                          shuffle_every_time=args.shuffle_every_time,
@@ -132,8 +136,8 @@ def main():
         ]
         dataset = LANLL(
             args.dataset_folder,
-            bin_size=20,
-            batch_size=100,
+            bin_size=args.bin_size,
+            batch_size=args.batch_size,
             lanl_URL="https://csr.lanl.gov/data-fence/1754169558/LJLbi4Mzkx-9QNYWlGpnnBuzR5k=/cyber1/",
             transforms=transformations)
     else:
