@@ -260,35 +260,16 @@ class LitFullModel(L.LightningModule):
 
         # Metrics from link classification
         for name, metric in self.link_class_metrics.items():
-            # If you give the AUROC metrics only true labels, 
-            # it compains
-            if name.endswith("_auc") or name.endswith("_ap"):
-                # So we skip when only true labels are present
-                if edge_class_labels.sum() == 0:
-                    continue
             metric(link_class, edge_class_labels.int())
 
         # Metrics from overall malicious event prediction
         malicious_event_mask = (edge_class_labels > 0.5).int()
 
-        for name, metric in self.mal_metrics.items():
-            # If you give the AUROC metrics only true labels, 
-            # it compains
-            if name.endswith("_auc") or name.endswith("_ap"):
-                # So we skip when only true labels are present
-                if edge_class_labels.sum() == 0:
-                    continue
-            
+        for name, metric in self.mal_metrics.items():            
             metric((torch.argmax(link_class, dim=1) > 0.5).float(), malicious_event_mask)
 
         # Metrics from only malicious events        
         for name, metric in self.mal_only_metrics.items():
-            # If you give the AUROC metrics only true labels, 
-            # it compains
-            if name.endswith("_auc") or name.endswith("_ap"):
-                # So we skip when only true labels are present
-                if edge_class_labels.sum() == 0:
-                    continue
             if malicious_event_mask.sum() > 0:
                 expanded_malicious_event_mask = malicious_event_mask.reshape(malicious_event_mask.size(0),1).expand(link_class.shape).bool()
                 malicious_labels = torch.masked_select(edge_class_labels, malicious_event_mask.bool())
