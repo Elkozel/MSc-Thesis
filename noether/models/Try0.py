@@ -49,7 +49,7 @@ class LinkTypeClassifier(nn.Module):
     def __init__(self, input_dim, num_classes):
         super().__init__()
         self.mlp = nn.Sequential(
-            nn.Linear(input_dim * 2, input_dim),
+            nn.Linear(input_dim * 2 + 1, input_dim),
             nn.ReLU(),
             nn.Linear(input_dim, num_classes)
         )
