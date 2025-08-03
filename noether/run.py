@@ -41,8 +41,10 @@ def parse_args():
 
     parser.add_argument('--max-epochs', type=int, default=10,
                         help="Maximum number of training epochs")
-    parser.add_argument('--num-devices', default="auto",
+    parser.add_argument('--devices', default="auto",
                         help="The amount of devices used by the Trainer")
+    parser.add_argument('--accelerator', default="auto",
+                        help="The accelerater used for training")
     parser.add_argument('--num-workers', default=0,
                         help="The amount of workers used by the dataloader")
     parser.add_argument('--dataset-folder', type=str, default="/data/datasets",
@@ -189,7 +191,8 @@ def main():
     torch.set_float32_matmul_precision('high')
 
     trainer = L.Trainer(max_epochs = args.max_epochs,
-                        devices=args.num_devices,
+                        devices=args.devices,
+                        accelerator=args.accelerator,
                         logger=comet_logger,  # type: ignore
                         log_every_n_steps=1,
                         default_root_dir=args.trainer_folder,
