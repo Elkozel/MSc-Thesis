@@ -20,8 +20,16 @@ class GNNEncoder(nn.Module):
         return out  # node embeddings
     
 class FakeRNN(nn.Module):
-    def forward(self, x_seq):
-        return x_seq
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x, h_0=None):
+        # Mimic output shape: [Batch * Node, Window, Feature]
+        output = x  # No transformation
+
+        # Mimic returning (output, hidden)
+        # Hidden could be last timestep for GRU/LSTM, but here it's None or just a copy
+        return output, h_0
     
 class MLPDecoder(nn.Module):
     def __init__(self, embed_dim: int, out_dim: int = 1, hidden_dim: int = 128):
