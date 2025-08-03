@@ -151,33 +151,35 @@ class UWF22Fall(datasets.UWF.UWF22Fall):
                  transforms: list = [],
                  num_workers: int = 0,
                  batch_split: list = [0.6, 0.25, 0.15], 
-                 dataset_name: str = "UWF22Fall_Shuffled",
+                 dataset_name: str = "UWF22Fall",
                  account_for_duration: bool = True,
                  shuffle: bool = True,
                  shuffle_type: Literal["random", "day"] = "random",
                  shuffle_every_time: bool = False):
         
-        self.original_dataset_name = dataset_name.replace("_Shuffled", "")
+        self.original_dataset_name = dataset_name
         super().__init__(data_dir, bin_size, batch_size, from_time, to_time, transforms, num_workers, batch_split, self.original_dataset_name, account_for_duration)
         
         self.shuffle = shuffle
         self.shuffle_type = shuffle_type
         self.shuffle_every_time = shuffle_every_time
         self.shuffle_bin_size = shuffle_bin_size
-        self.shuffled_dataset_name = dataset_name
-        self.shuffled_dataset_dir = os.path.join(data_dir, dataset_name)
+        self.shuffled_dataset_name = f"{self.original_dataset_name}_{self.shuffle_type}_{shuffle_bin_size}"
+        self.shuffled_dataset_dir = os.path.join(data_dir, self.shuffled_dataset_name)
+        
+        if self.shuffle and self.shuffle_type == "day":
+            self.ts_first_event = 0
 
-        self.ts_first_event = 0
 
-    def database_to_df(self):
+    def dataset_to_df(self):
         dfs = []
 
         for file in self.download_data:
             filename = os.path.join(self.data_dir, file["raw_file"])
-            part = pd.read_parquet(filename)
+            part = pl.scan_parquet(filename)
             dfs.append(part)
 
-        df = pd.concat(dfs)
+        df = pl.concat(dfs)
         
         return df
     
@@ -192,12 +194,12 @@ class UWF22Fall(datasets.UWF.UWF22Fall):
         if not self.is_already_shuffled() and force == False:
             return
         
-        df = self.database_to_df()
+        df = self.dataset_to_df()
         df = self.shuffle_fn(df)
 
         # Split the dataframe into parts
         num_parts = len(self.download_data)
-        df = df.sort_values("ts")
+        df = df.sort(["ts"]).collect().to_pandas()
         parts = np.array_split(df, num_parts)
 
         os.makedirs(self.shuffled_dataset_dir, exist_ok=True)
@@ -206,7 +208,7 @@ class UWF22Fall(datasets.UWF.UWF22Fall):
             result_file = os.path.join(self.shuffled_dataset_dir, file["raw_file"])
             df_part.to_parquet(result_file, index=False)
 
-    def shuffle_fn(self, df: pd.DataFrame):
+    def shuffle_fn(self, df: pl.LazyFrame):
         if self.shuffle_type == "random":
             df = self.random_shuffle(df)
         elif self.shuffle_type == "day":
@@ -216,34 +218,43 @@ class UWF22Fall(datasets.UWF.UWF22Fall):
         
         return df
         
-    def day_shuffle(self, df: pd.DataFrame):
-        df["day"] = df["datetime"].dt.day
-        df['day_start'] = df['datetime'].dt.normalize()
-        df['rel_ts'] = df['datetime'] - df['day_start']
-        df["ts"] = df["rel_ts"].dt.total_seconds()
+    def day_shuffle(self, df: pl.LazyFrame):
+        df = df.with_columns(
+            # For each event calculate the day 
+            day = pl.col("datetime").dt.day(),
+            day_start = pl.col("datetime").dt.truncate("1d")
+        ).with_columns(
+            # Find the relative time between the start of the day and the event
+            rel_ts = pl.col("datetime") - pl.col("day_start")
+        ).with_columns(
+            ts = pl.col("rel_ts").dt.total_seconds()
+        )
         
-        df = df.drop(columns=["rel_ts", "day_start", "day"])
+        # Clean up
+        df = df.drop(["rel_ts", "day_start", "day"])
 
         return df
     
-    def random_shuffle(self, df: pd.DataFrame):
+    def random_shuffle(self, df: pl.LazyFrame):
         # Create bins
-        df['bin'] = df['ts'] // self.shuffle_bin_size
-        df["ts_diff"] = df["ts"] - (df["bin"] * self.shuffle_bin_size)
+        df = df.with_columns(
+            bin = pl.col("ts") // self.shuffle_bin_size
+        ).with_columns(
+            ts_diff = pl.col("ts") - (pl.col("bin") * self.shuffle_bin_size)
+        )
 
-        # Shuffle groups
-        unique_groups = df["bin"].unique()
-        shuffled_groups = np.random.permutation(unique_groups)
-
-        group_mapping = dict(zip(unique_groups, shuffled_groups))
-        df["bin"] = df["bin"].map(group_mapping)
+        # Shuffle groups        
+        df = df.with_columns(
+            bin = pl.col("bin").shuffle()
+        )
 
         # Repair the ts
-        df["ts"] = df["ts_diff"] + (df["bin"] * self.shuffle_bin_size)
+        df = df.with_columns(
+            ts = pl.col("ts_diff") + (pl.col("bin") * self.shuffle_bin_size)
+        )
 
-        # Drop the extra columns
-        df = df.drop(columns=["bin", "ts_diff"])
-        df = df.sort_values(["ts"], ignore_index=True)
+        # Clean up
+        df = df.drop(["bin", "ts_diff"]).sort("ts")
 
         return df
 
@@ -252,6 +263,11 @@ class UWF22Fall(datasets.UWF.UWF22Fall):
         if self.shuffle:
             # Check if shuffle is needed
             self.shuffle_dataset(self.shuffle_every_time)
+            # Copy the service and host maps
+            pl.read_parquet(os.path.join(self.data_dir, "services.parquet"))\
+                .write_parquet(os.path.join(self.shuffled_dataset_dir, "services.parquet"))
+            pl.read_parquet(os.path.join(self.data_dir, "hosts.parquet"))\
+                .write_parquet(os.path.join(self.shuffled_dataset_dir, "hosts.parquet"))
             # Set the new dataset dir
             self.data_dir = self.shuffled_dataset_dir
             self.dataset_name = self.shuffled_dataset_name
@@ -267,33 +283,35 @@ class UWF24(datasets.UWF.UWF24):
                  transforms: list = [],
                  num_workers: int = 0,
                  batch_split: list = [0.6, 0.25, 0.15], 
-                 dataset_name: str = "UWF24_Shuffled",
+                 dataset_name: str = "UWF24",
                  account_for_duration: bool = True,
                  shuffle: bool = True,
                  shuffle_type: Literal["random", "day"] = "random",
                  shuffle_every_time: bool = False):
         
-        self.original_dataset_name = dataset_name.replace("_Shuffled", "")
+        self.original_dataset_name = dataset_name
         super().__init__(data_dir, bin_size, batch_size, from_time, to_time, transforms, num_workers, batch_split, self.original_dataset_name, account_for_duration)
         
         self.shuffle = shuffle
         self.shuffle_type = shuffle_type
         self.shuffle_every_time = shuffle_every_time
         self.shuffle_bin_size = shuffle_bin_size
-        self.shuffled_dataset_name = dataset_name
-        self.shuffled_dataset_dir = os.path.join(data_dir, dataset_name)
+        self.shuffled_dataset_name = f"{self.original_dataset_name}_{self.shuffle_type}_{shuffle_bin_size}"
+        self.shuffled_dataset_dir = os.path.join(data_dir, self.shuffled_dataset_name)
+        
+        if self.shuffle and self.shuffle_type == "day":
+            self.ts_first_event = 0
 
-        self.ts_first_event = 0
 
-    def database_to_df(self):
+    def dataset_to_df(self):
         dfs = []
 
         for file in self.download_data:
             filename = os.path.join(self.data_dir, file["raw_file"])
-            part = pd.read_parquet(filename)
+            part = pl.scan_parquet(filename)
             dfs.append(part)
 
-        df = pd.concat(dfs)
+        df = pl.concat(dfs)
         
         return df
     
@@ -308,12 +326,12 @@ class UWF24(datasets.UWF.UWF24):
         if not self.is_already_shuffled() and force == False:
             return
         
-        df = self.database_to_df()
+        df = self.dataset_to_df()
         df = self.shuffle_fn(df)
 
         # Split the dataframe into parts
         num_parts = len(self.download_data)
-        df = df.sort_values("ts")
+        df = df.sort(["ts"]).collect().to_pandas()
         parts = np.array_split(df, num_parts)
 
         os.makedirs(self.shuffled_dataset_dir, exist_ok=True)
@@ -322,7 +340,7 @@ class UWF24(datasets.UWF.UWF24):
             result_file = os.path.join(self.shuffled_dataset_dir, file["raw_file"])
             df_part.to_parquet(result_file, index=False)
 
-    def shuffle_fn(self, df: pd.DataFrame):
+    def shuffle_fn(self, df: pl.LazyFrame):
         if self.shuffle_type == "random":
             df = self.random_shuffle(df)
         elif self.shuffle_type == "day":
@@ -332,34 +350,43 @@ class UWF24(datasets.UWF.UWF24):
         
         return df
         
-    def day_shuffle(self, df: pd.DataFrame):
-        df["day"] = df["datetime"].dt.day
-        df['day_start'] = df['datetime'].dt.normalize()
-        df['rel_ts'] = df['datetime'] - df['day_start']
-        df["ts"] = df["rel_ts"].dt.total_seconds()
+    def day_shuffle(self, df: pl.LazyFrame):
+        df = df.with_columns(
+            # For each event calculate the day 
+            day = pl.col("datetime").dt.day(),
+            day_start = pl.col("datetime").dt.truncate("1d")
+        ).with_columns(
+            # Find the relative time between the start of the day and the event
+            rel_ts = pl.col("datetime") - pl.col("day_start")
+        ).with_columns(
+            ts = pl.col("rel_ts").dt.total_seconds()
+        )
         
-        df = df.drop(columns=["rel_ts", "day_start", "day"])
+        # Clean up
+        df = df.drop(["rel_ts", "day_start", "day"])
 
         return df
     
-    def random_shuffle(self, df: pd.DataFrame):
+    def random_shuffle(self, df: pl.LazyFrame):
         # Create bins
-        df['bin'] = df['ts'] // self.shuffle_bin_size
-        df["ts_diff"] = df["ts"] - (df["bin"] * self.shuffle_bin_size)
+        df = df.with_columns(
+            bin = pl.col("ts") // self.shuffle_bin_size
+        ).with_columns(
+            ts_diff = pl.col("ts") - (pl.col("bin") * self.shuffle_bin_size)
+        )
 
-        # Shuffle groups
-        unique_groups = df["bin"].unique()
-        shuffled_groups = np.random.permutation(unique_groups)
-
-        group_mapping = dict(zip(unique_groups, shuffled_groups))
-        df["bin"] = df["bin"].map(group_mapping)
+        # Shuffle groups        
+        df = df.with_columns(
+            bin = pl.col("bin").shuffle()
+        )
 
         # Repair the ts
-        df["ts"] = df["ts_diff"] + (df["bin"] * self.shuffle_bin_size)
+        df = df.with_columns(
+            ts = pl.col("ts_diff") + (pl.col("bin") * self.shuffle_bin_size)
+        )
 
-        # Drop the extra columns
-        df = df.drop(columns=["bin", "ts_diff"])
-        df = df.sort_values(["ts"], ignore_index=True)
+        # Clean up
+        df = df.drop(["bin", "ts_diff"]).sort("ts")
 
         return df
 
@@ -368,9 +395,15 @@ class UWF24(datasets.UWF.UWF24):
         if self.shuffle:
             # Check if shuffle is needed
             self.shuffle_dataset(self.shuffle_every_time)
+            # Copy the service and host maps
+            pl.read_parquet(os.path.join(self.data_dir, "services.parquet"))\
+                .write_parquet(os.path.join(self.shuffled_dataset_dir, "services.parquet"))
+            pl.read_parquet(os.path.join(self.data_dir, "hosts.parquet"))\
+                .write_parquet(os.path.join(self.shuffled_dataset_dir, "hosts.parquet"))
             # Set the new dataset dir
             self.data_dir = self.shuffled_dataset_dir
             self.dataset_name = self.shuffled_dataset_name
+
 
 class UWF24Fall(datasets.UWF.UWF24Fall):
     def __init__(self, 
@@ -383,33 +416,35 @@ class UWF24Fall(datasets.UWF.UWF24Fall):
                  transforms: list = [],
                  num_workers: int = 0,
                  batch_split: list = [0.6, 0.25, 0.15], 
-                 dataset_name: str = "UWF24Fall_Shuffled",
+                 dataset_name: str = "UWF24Fall",
                  account_for_duration: bool = True,
                  shuffle: bool = True,
                  shuffle_type: Literal["random", "day"] = "random",
                  shuffle_every_time: bool = False):
         
-        self.original_dataset_name = dataset_name.replace("_Shuffled", "")
+        self.original_dataset_name = dataset_name
         super().__init__(data_dir, bin_size, batch_size, from_time, to_time, transforms, num_workers, batch_split, self.original_dataset_name, account_for_duration)
         
         self.shuffle = shuffle
         self.shuffle_type = shuffle_type
         self.shuffle_every_time = shuffle_every_time
         self.shuffle_bin_size = shuffle_bin_size
-        self.shuffled_dataset_name = dataset_name
-        self.shuffled_dataset_dir = os.path.join(data_dir, dataset_name)
+        self.shuffled_dataset_name = f"{self.original_dataset_name}_{self.shuffle_type}_{shuffle_bin_size}"
+        self.shuffled_dataset_dir = os.path.join(data_dir, self.shuffled_dataset_name)
+        
+        if self.shuffle and self.shuffle_type == "day":
+            self.ts_first_event = 0
 
-        self.ts_first_event = 0
 
-    def database_to_df(self):
+    def dataset_to_df(self):
         dfs = []
 
         for file in self.download_data:
             filename = os.path.join(self.data_dir, file["raw_file"])
-            part = pd.read_parquet(filename)
+            part = pl.scan_parquet(filename)
             dfs.append(part)
 
-        df = pd.concat(dfs)
+        df = pl.concat(dfs)
         
         return df
     
@@ -424,12 +459,12 @@ class UWF24Fall(datasets.UWF.UWF24Fall):
         if not self.is_already_shuffled() and force == False:
             return
         
-        df = self.database_to_df()
+        df = self.dataset_to_df()
         df = self.shuffle_fn(df)
 
         # Split the dataframe into parts
         num_parts = len(self.download_data)
-        df = df.sort_values("ts")
+        df = df.sort(["ts"]).collect().to_pandas()
         parts = np.array_split(df, num_parts)
 
         os.makedirs(self.shuffled_dataset_dir, exist_ok=True)
@@ -438,7 +473,7 @@ class UWF24Fall(datasets.UWF.UWF24Fall):
             result_file = os.path.join(self.shuffled_dataset_dir, file["raw_file"])
             df_part.to_parquet(result_file, index=False)
 
-    def shuffle_fn(self, df: pd.DataFrame):
+    def shuffle_fn(self, df: pl.LazyFrame):
         if self.shuffle_type == "random":
             df = self.random_shuffle(df)
         elif self.shuffle_type == "day":
@@ -448,34 +483,43 @@ class UWF24Fall(datasets.UWF.UWF24Fall):
         
         return df
         
-    def day_shuffle(self, df: pd.DataFrame):
-        df["day"] = df["datetime"].dt.day
-        df['day_start'] = df['datetime'].dt.normalize()
-        df['rel_ts'] = df['datetime'] - df['day_start']
-        df["ts"] = df["rel_ts"].dt.total_seconds()
+    def day_shuffle(self, df: pl.LazyFrame):
+        df = df.with_columns(
+            # For each event calculate the day 
+            day = pl.col("datetime").dt.day(),
+            day_start = pl.col("datetime").dt.truncate("1d")
+        ).with_columns(
+            # Find the relative time between the start of the day and the event
+            rel_ts = pl.col("datetime") - pl.col("day_start")
+        ).with_columns(
+            ts = pl.col("rel_ts").dt.total_seconds()
+        )
         
-        df = df.drop(columns=["rel_ts", "day_start", "day"])
+        # Clean up
+        df = df.drop(["rel_ts", "day_start", "day"])
 
         return df
     
-    def random_shuffle(self, df: pd.DataFrame):
+    def random_shuffle(self, df: pl.LazyFrame):
         # Create bins
-        df['bin'] = df['ts'] // self.shuffle_bin_size
-        df["ts_diff"] = df["ts"] - (df["bin"] * self.shuffle_bin_size)
+        df = df.with_columns(
+            bin = pl.col("ts") // self.shuffle_bin_size
+        ).with_columns(
+            ts_diff = pl.col("ts") - (pl.col("bin") * self.shuffle_bin_size)
+        )
 
-        # Shuffle groups
-        unique_groups = df["bin"].unique()
-        shuffled_groups = np.random.permutation(unique_groups)
-
-        group_mapping = dict(zip(unique_groups, shuffled_groups))
-        df["bin"] = df["bin"].map(group_mapping)
+        # Shuffle groups        
+        df = df.with_columns(
+            bin = pl.col("bin").shuffle()
+        )
 
         # Repair the ts
-        df["ts"] = df["ts_diff"] + (df["bin"] * self.shuffle_bin_size)
+        df = df.with_columns(
+            ts = pl.col("ts_diff") + (pl.col("bin") * self.shuffle_bin_size)
+        )
 
-        # Drop the extra columns
-        df = df.drop(columns=["bin", "ts_diff"])
-        df = df.sort_values(["ts"], ignore_index=True)
+        # Clean up
+        df = df.drop(["bin", "ts_diff"]).sort("ts")
 
         return df
 
@@ -484,6 +528,11 @@ class UWF24Fall(datasets.UWF.UWF24Fall):
         if self.shuffle:
             # Check if shuffle is needed
             self.shuffle_dataset(self.shuffle_every_time)
+            # Copy the service and host maps
+            pl.read_parquet(os.path.join(self.data_dir, "services.parquet"))\
+                .write_parquet(os.path.join(self.shuffled_dataset_dir, "services.parquet"))
+            pl.read_parquet(os.path.join(self.data_dir, "hosts.parquet"))\
+                .write_parquet(os.path.join(self.shuffled_dataset_dir, "hosts.parquet"))
             # Set the new dataset dir
             self.data_dir = self.shuffled_dataset_dir
             self.dataset_name = self.shuffled_dataset_name
