@@ -85,7 +85,6 @@ class UWF22(L.LightningDataModule):
         self.transforms = transforms
         self.num_workers = num_workers
         self.account_for_duration = account_for_duration
-        self.account_for_duration = False
         self.batch_mask = {}
         self.batch_split = batch_split
         self.ts_first_event = 1639746045.213779 # This allows us to easily make time relative
@@ -253,7 +252,7 @@ class UWF22(L.LightningDataModule):
             duration = x[0]
             end_ts = x[1]
             if duration is None:
-                return (None, [end_ts])
+                return ([], [end_ts])
             
             start_ts = float(end_ts - duration)
             
@@ -261,42 +260,26 @@ class UWF22(L.LightningDataModule):
             all_ts = np.arange(start_ts, end_ts, self.bin_size)[:-1] # cut the last one (we already have the original event)
             all_ts = np.append(all_ts, end_ts) # add the original event
 
+            start_conn_state = ["started"] if all_ts.size > 1 else []
+
             open_conn_states = ["open" for _ in range(all_ts.size - 2)]
-            all_conn_states = ["started"] + open_conn_states + ["closing"]
+            all_conn_states = start_conn_state + open_conn_states + ["closing"]
 
             return (all_conn_states, all_ts)
         
-        collected_df = df.collect()
-        collected_df = collected_df.select(["duration", "ts"]).map_rows(expand, return_dtype=pl.List)
-        
-        df = df.with_columns(
-            start_ts = pl.when(pl.col("duration").is_not_null())
-                .then(pl.col("ts") - pl.col("duration")),
-            start_conn_status = pl.when(pl.col("duration").is_not_null())
-                .then(pl.lit("starting"))
-            )
+        additional_df = df.select(["duration", "ts"]).collect().map_rows(expand).lazy()
 
-        # Handle times
-        df = df.with_columns(
-            ts_list = pl.int_ranges(pl.col("start_ts") + self.bin_size, pl.col("ts") - self.bin_size, self.bin_size)
-                .list.eval(pl.element().cast(pl.Float64, strict=False)),
-            conn_status_list = pl.int_ranges(pl.col("start_ts") + self.bin_size, pl.col("ts") - self.bin_size, self.bin_size)
-                .map_elements(lambda n: ["open"] * n.len(), return_dtype=pl.List)
-            )
-        df = df.with_columns(
-            end_ts = pl.col("ts"),
-            end_conn_status = pl.when(pl.col("duration").is_not_null())
-                .then(pl.lit("closing"))
-        )
+        df = pl.concat([df, additional_df], how="horizontal")
 
-        # Concat everything back
         df = df.with_columns(
-            ts = pl.concat_list("start_ts", "ts_list", "end_ts"),
-            conn_status = pl.concat_list("start_conn_status", "conn_status_list", "end_conn_status")
-        )
+            conn_state = pl.col("column_0").map_elements(pl.element().cast(pl.List(pl.String))),
+            ts = pl.col("column_1").map_elements(pl.element().cast(pl.List(pl.Int32)))
+        ).drop([
+            "column_0", "column_1"
+        ]).collect()
 
         # Explode
-        df = df.explode(["ts", "conn_status"]) \
+        df = df.explode(["ts", "conn_state"]) \
             .with_columns(
                 ts = pl.col("ts").cast(pl.Float32)
             ).filter(
