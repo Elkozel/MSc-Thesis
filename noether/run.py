@@ -39,7 +39,7 @@ def parse_args():
     parser.add_argument('--shuffle-every-time', action=argparse.BooleanOptionalAction,
                         help="Whether to reshuffle the dataset if it has already been shuffled previously", default=True)
 
-    parser.add_argument('--max-epochs', type=int, default=50,
+    parser.add_argument('--max-epochs', type=int, default=10,
                         help="Maximum number of training epochs")
     parser.add_argument('--num-devices', default="auto",
                         help="The amount of devices used by the Trainer")
