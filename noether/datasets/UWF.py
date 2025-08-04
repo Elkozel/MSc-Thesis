@@ -179,25 +179,24 @@ class UWF22(L.LightningDataModule):
 
 
     def generate_split_file(self, df: pl.LazyFrame) -> torch.Tensor:
-        df = self.expand_duration(df)
-
         # Make time relative
         df = df.with_columns(
             ts = pl.col("ts") - self.ts_first_event
         )
         
+        # Expland for duration
+        df = self.expand_duration(df)
+
         # Filter only the timestamps we care about
-        collected_df = df.filter(
+        df = df.filter(
             (pl.col("ts") >= self.from_time) & (pl.col("ts") < self.to_time)
-        ).collect()
-        if collected_df.is_empty():
-            return torch.empty(0)
+        )
 
         # Calculate bins
-        collected_df = collected_df.with_columns(
+        df = df.with_columns(
             batch = pl.col("ts") // self.bin_size // self.batch_size
         )
-        batches = collected_df.select("batch").unique().to_series()
+        batches = df.select("batch").unique().collect().to_series()
         num_batches = batches.len()
 
         # Randomly split the indices into training (60%), validation (25%), and test (15%) sets
@@ -252,7 +251,7 @@ class UWF22(L.LightningDataModule):
             duration = x[0]
             end_ts = x[1]
             if duration is None:
-                return ([], [end_ts])
+                return (["closing"], [end_ts])
             
             start_ts = float(end_ts - duration)
             
@@ -260,28 +259,29 @@ class UWF22(L.LightningDataModule):
             all_ts = np.arange(start_ts, end_ts, self.bin_size)[:-1] # cut the last one (we already have the original event)
             all_ts = np.append(all_ts, end_ts) # add the original event
 
-            start_conn_state = ["started"] if all_ts.size > 1 else []
+            start_conn_status = ["started"] if all_ts.size > 1 else []
 
-            open_conn_states = ["open" for _ in range(all_ts.size - 2)]
-            all_conn_states = start_conn_state + open_conn_states + ["closing"]
+            open_conn_status = ["open" for _ in range(all_ts.size - 2)]
+            all_conn_status = start_conn_status + open_conn_status + ["closing"]
 
-            return (all_conn_states, all_ts)
+            return (all_conn_status, list(all_ts))
         
         additional_df = df.select(["duration", "ts"]).collect().map_rows(expand).lazy()
 
         df = pl.concat([df, additional_df], how="horizontal")
 
+        # Apply expansion as list columns        
         df = df.with_columns(
-            conn_state = pl.col("column_0").map_elements(pl.element().cast(pl.List(pl.String))),
-            ts = pl.col("column_1").map_elements(pl.element().cast(pl.List(pl.Int32)))
+            conn_status = pl.col("column_0").cast(pl.List(pl.String)),
+            ts = pl.col("column_1").cast(pl.List(pl.Float32))
         ).drop([
             "column_0", "column_1"
-        ]).collect()
+        ])
 
         # Explode
-        df = df.explode(["ts", "conn_state"]) \
+        df = df.explode(["ts", "conn_status"]) \
             .with_columns(
-                ts = pl.col("ts").cast(pl.Float32)
+                ts = pl.col("ts")
             ).filter(
                 pl.col("ts") >= 0.0
             ).sort("ts")
@@ -289,18 +289,19 @@ class UWF22(L.LightningDataModule):
         return df
     
     def bin_df(self, df: pl.LazyFrame) -> pl.LazyFrame:
-        df = self.expand_duration(df)
+        # Ensure 'time' is numeric
+        df = df.with_columns(
+            pl.col("ts").drop_nans()
+        )
 
         # Make time relative
         df = df.with_columns(
             abs_ts = pl.col("ts"),
             ts = pl.col("ts") - self.ts_first_event
         )
-
-        # Ensure 'time' is numeric
-        df = df.with_columns(
-            pl.col("ts").cast(pl.Float64).drop_nans()
-        ).sort("ts")
+        
+        # Expand events
+        df = self.expand_duration(df)
 
         # Find only data between the time given
         df = df.filter(
@@ -351,6 +352,7 @@ class UWF22(L.LightningDataModule):
             batch_mask: torch.Tensor = self.batch_mask[file["raw_file"]]
 
             df = self.bin_df(df)
+            s = df.explain()
             collected_df = df.collect()
             batches = collected_df.select("batch").unique().to_series()
 
