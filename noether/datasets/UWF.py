@@ -228,8 +228,7 @@ class UWF22(L.LightningDataModule):
         # Generate batch split
         for file in self.download_data:
             filename = file["raw_file"]
-            df = pl.scan_parquet(os.path.join(self.data_dir, filename))\
-                .select(["src_ip_zeek", "src_port_zeek", "dest_ip_zeek", "dest_port_zeek", "ts", "duration"])
+            df = pl.scan_parquet(os.path.join(self.data_dir, filename))
 
             # Generate the batch masks
             batch_mask = self.generate_split_file(df)
@@ -259,7 +258,7 @@ class UWF22(L.LightningDataModule):
             all_ts = np.arange(start_ts, end_ts, self.bin_size)[:-1] # cut the last one (we already have the original event)
             all_ts = np.append(all_ts, end_ts) # add the original event
 
-            start_conn_status = ["started"] if all_ts.size > 1 else []
+            start_conn_status = ["starting"] if all_ts.size > 1 else []
 
             open_conn_status = ["open" for _ in range(all_ts.size - 2)]
             all_conn_status = start_conn_status + open_conn_status + ["closing"]
@@ -346,6 +345,7 @@ class UWF22(L.LightningDataModule):
         return df
         
     def generate_batches(self):
+
         for file in self.download_data:
             filename = os.path.join(self.data_dir, file["raw_file"])
             df = pl.scan_parquet(filename)
