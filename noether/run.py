@@ -32,10 +32,12 @@ def parse_args():
     parser.add_argument('--batch-size', type=int, default=450,
                         help="The size of batches used during training")
     parser.add_argument('--dropout', type=float, default=0.0,
-                        help="The dropout rate used")    
+                        help="The dropout rate used")
     parser.add_argument('--account-for-duration', action=argparse.BooleanOptionalAction,
                         help="Whether extra records should be added to account for connections, which are bigger \
                             than the bin size", default=False)
+    parser.add_argument('--link-prediction-only', action=argparse.BooleanOptionalAction,
+                        help="Whether to only concentrate on link prediction", default=False)
     parser.add_argument('--shuffle', action=argparse.BooleanOptionalAction,
                         help="Whether the dataset should be shuffled", default=False)
     parser.add_argument('--shuffle-type', type=str, choices=["day", "random"],
@@ -150,14 +152,16 @@ def main():
         dataset.node_features + 2,
         dataset.node_features * 3,
         out_classes = dataset.num_classes,
-        dropout_rate = args.dropout
+        dropout_rate = args.dropout,
+        link_pred_only=args.link_prediction_only
         )
     elif args.model == "try1":
         model = Try1(
         dataset.node_features + 2,
         dataset.node_features + 2 * 3,
         out_classes = dataset.num_classes,
-        dropout_rate = args.dropout
+        dropout_rate = args.dropout,
+        link_pred_only=args.link_prediction_only
         )
     elif args.model == "try2":
         model = Try2(
@@ -165,7 +169,8 @@ def main():
         out_classes = dataset.num_classes,
         pred_alpha = 1.1,
         dropout_rate = args.dropout,
-        edge_dim = dataset.edge_features
+        edge_dim = dataset.edge_features,
+        link_pred_only=args.link_prediction_only
         )
     elif args.model == "try2h":
         model = Try2H(
@@ -184,7 +189,8 @@ def main():
         out_classes = dataset.num_classes,
         pred_alpha = 1.1,
         dropout_rate = args.dropout,
-        edge_dim = dataset.edge_features
+        edge_dim = dataset.edge_features,
+        link_pred_only=args.link_prediction_only
         )
     else:
         raise NotImplementedError(f"Model {args.model} is not implemented")
