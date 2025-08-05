@@ -271,7 +271,7 @@ class LitFullModel(L.LightningModule):
             case "confidence":
                 loss = confidence_class_loss
             case _:
-                raise Exception(f"Unsupported loss name {_}")
+                raise Exception(f"Unsupported loss name {self.loss_fun_name}")
 
         # Metrics from link prediction
         for name, metric in self.link_pred_metrics.items():
