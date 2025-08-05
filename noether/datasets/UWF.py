@@ -308,19 +308,22 @@ class UWF22(L.LightningDataModule):
         )
 
         # Merge with the service map
-        df = df\
-            .join(self.servicemap.with_row_index("src_service_id"),
+        df = df.join(self.servicemap.with_row_index(),
                 left_on=["src_ip_zeek", "src_port_zeek"],
                 right_on=["host", "port"],
                 how="left",
                 suffix="source",
-                validate="m:1")\
-            .join(self.servicemap.with_row_index("dest_service_id"),
+                validate="m:1").rename({
+                    "index": "src_service_id"
+                })
+        df = df.join(self.servicemap.with_row_index(),
                 left_on=["dest_ip_zeek", "dest_port_zeek"],
                 right_on=["host", "port"],
                 how="left",
                 suffix="destination",
-                validate="m:1")
+                validate="m:1").rename({
+                    "index": "dest_service_id"
+                })
         
         # Apply the enums
         df = df.with_columns(
@@ -345,19 +348,16 @@ class UWF22(L.LightningDataModule):
         return df
         
     def generate_batches(self):
-
         for file in self.download_data:
             filename = os.path.join(self.data_dir, file["raw_file"])
             df = pl.scan_parquet(filename)
             batch_mask: torch.Tensor = self.batch_mask[file["raw_file"]]
 
             df = self.bin_df(df)
-            s = df.explain()
-            collected_df = df.collect()
-            batches = collected_df.select("batch").unique().to_series()
+            batches = df.select("batch").unique().collect().to_series()
 
             for batch_num in range(batch_mask.size(0)):
-                batch = collected_df.filter(pl.col("batch") == batches[batch_num])
+                batch = df.filter(pl.col("batch") == batches[batch_num]).collect()
                 batch_stage = batch_mask[batch_num].item()
                 
                 final_batch = [
