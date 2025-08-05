@@ -96,6 +96,7 @@ class LitFullModel(L.LightningModule):
         negative_edge_sampling_min = 20,
         pred_alpha = 1.2,
         link_pred_only = False,
+        loss_fun_name: str = "alpha",
         model_name="Try1"
     ):
         super().__init__()
@@ -143,6 +144,7 @@ class LitFullModel(L.LightningModule):
         self.negative_edge_sampling_min = negative_edge_sampling_min
         self.pred_alpha = pred_alpha
         self.link_pred_only = link_pred_only
+        self.loss_fun_name = loss_fun_name
 
         self.save_hyperparameters()
 
@@ -250,8 +252,8 @@ class LitFullModel(L.LightningModule):
         class_loss = F.cross_entropy(link_class, edge_class_labels.long(), weight=weights)
 
         # Confidence loss
-        conf_weighted_class_loss = F.cross_entropy(link_class, edge_class_labels.long(), reduction='none')
-        conf_weighted_class_loss = (conf_weighted_class_loss * link_pred_probs.squeeze()).mean()
+        confidence_class_loss = F.cross_entropy(link_class, edge_class_labels.long(), reduction='none')
+        confidence_class_loss = (confidence_class_loss * link_pred_probs.squeeze()).mean()
 
         # Loss v2
         mal_count = positive_edge_labels.count_nonzero().item()
@@ -259,10 +261,17 @@ class LitFullModel(L.LightningModule):
         mal_percentage = max(mal_count/edge_count, 0.2)
         loss_v2 = pred_loss * (1-mal_percentage) + class_loss * mal_percentage
         
-        if self.link_pred_only:
-            loss = pred_loss
-        else:
-            loss = pred_loss * self.pred_alpha +  class_loss
+        match self.loss_fun_name:
+            case "pred_only":
+                loss = pred_loss
+            case "alpha":
+                loss = pred_loss * self.pred_alpha +  class_loss
+            case "v2":
+                loss = loss_v2
+            case "confidence":
+                loss = confidence_class_loss
+            case _:
+                raise Exception(f"Unsupported loss name {_}")
 
         # Metrics from link prediction
         for name, metric in self.link_pred_metrics.items():
@@ -324,7 +333,7 @@ class LitFullModel(L.LightningModule):
             "loss": loss,
             "pred_loss": pred_loss,
             "class_loss": class_loss,
-            "confidence_loss": conf_weighted_class_loss,
+            "confidence_loss": confidence_class_loss,
             "lossv2": loss_v2,
             "mal_count": data.y.count_nonzero().float(),
             "benign_count": data.y.size(0) - int(data.y.count_nonzero()),

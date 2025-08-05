@@ -102,6 +102,7 @@ class LitFullModel(L.LightningModule):
         negative_edge_sampling_min = 20,
         pred_alpha = 0.8,
         link_pred_only = False,
+        loss_fun_name: str = "alpha",
         model_name="Try3"
     ):
         super().__init__()

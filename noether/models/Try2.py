@@ -94,12 +94,14 @@ class LitFullModel(Try1):
         negative_edge_sampling_min = 20,
         pred_alpha = 0.8,
         link_pred_only = False,
+        loss_fun_name: str = "alpha",
         model_name="Try2"
     ):
         if hidden_channels is None:
             hidden_channels = in_channels * 3
         super().__init__(in_channels, hidden_channels, dropout_rate, out_classes, rnn_window_size, 
-                         rnn_num_layers, binary_threshold, negative_edge_sampling_min, pred_alpha, link_pred_only, model_name)
+                         rnn_num_layers, binary_threshold, negative_edge_sampling_min, pred_alpha, 
+                         link_pred_only, model_name, loss_fun_name)
         
         self.gnn = GNNEncoder(in_channels, hidden_channels, edge_dim, dropout_rate)
         self.rnn = RNNEncoder(hidden_channels, rnn_num_layers, dropout=dropout_rate)

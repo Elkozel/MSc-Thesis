@@ -33,6 +33,9 @@ def parse_args():
                         help="The size of batches used during training")
     parser.add_argument('--dropout', type=float, default=0.0,
                         help="The dropout rate used")
+    parser.add_argument('--loss-function', type=str, default="alpha",
+                        help="The name of the loss function to use")
+    
     parser.add_argument('--account-for-duration', action=argparse.BooleanOptionalAction,
                         help="Whether extra records should be added to account for connections, which are bigger \
                             than the bin size", default=False)
@@ -153,7 +156,8 @@ def main():
         dataset.node_features * 3,
         out_classes = dataset.num_classes,
         dropout_rate = args.dropout,
-        link_pred_only=args.link_prediction_only
+        link_pred_only=args.link_prediction_only,
+        loss_fun_name=args.loss_function
         )
     elif args.model == "try1":
         model = Try1(
@@ -161,7 +165,8 @@ def main():
         dataset.node_features + 2 * 3,
         out_classes = dataset.num_classes,
         dropout_rate = args.dropout,
-        link_pred_only=args.link_prediction_only
+        link_pred_only=args.link_prediction_only,
+        loss_fun_name=args.loss_function
         )
     elif args.model == "try2":
         model = Try2(
@@ -170,7 +175,8 @@ def main():
         pred_alpha = 1.1,
         dropout_rate = args.dropout,
         edge_dim = dataset.edge_features,
-        link_pred_only=args.link_prediction_only
+        link_pred_only=args.link_prediction_only,
+        loss_fun_name=args.loss_function
         )
     elif args.model == "try2h":
         model = Try2H(
@@ -190,7 +196,8 @@ def main():
         pred_alpha = 1.1,
         dropout_rate = args.dropout,
         edge_dim = dataset.edge_features,
-        link_pred_only=args.link_prediction_only
+        link_pred_only=args.link_prediction_only,
+        loss_fun_name=args.loss_function
         )
     else:
         raise NotImplementedError(f"Model {args.model} is not implemented")
