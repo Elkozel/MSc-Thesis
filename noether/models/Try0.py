@@ -5,8 +5,9 @@ from torch_geometric.nn import GCNConv
 from models.Try1 import LitFullModel as Try1
 
 class GNNEncoder(nn.Module):
-    def __init__(self, in_channels, hidden_channels):
+    def __init__(self, in_channels, hidden_channels, dropout: float = 0.0):
         super().__init__()
+        self.dropout = nn.Dropout(dropout)
         self.conv1 = GCNConv(in_channels, hidden_channels)
         self.conv2 = GCNConv(hidden_channels, hidden_channels)
         self.conv3 = GCNConv(hidden_channels, hidden_channels)
@@ -14,13 +15,15 @@ class GNNEncoder(nn.Module):
     def forward(self, x, edge_index, edge_features):
         out = self.conv1(x, edge_index)
         out = F.relu(out)
+        out = self.dropout(out)
         out = self.conv2(out, edge_index)
         out = F.relu(out)
+        out = self.dropout(out)
         out = self.conv3(out, edge_index)
         return out  # node embeddings
     
 class FakeRNN(nn.Module):
-    def __init__(self):
+    def __init__(self, dropout: float = 0.0):
         super().__init__()
 
     def forward(self, x, h_0=None):
@@ -94,8 +97,8 @@ class LitFullModel(Try1):
         super().__init__(in_channels, hidden_channels, dropout_rate, out_classes, rnn_window_size, rnn_num_layers, binary_threshold, negative_edge_sampling_min, pred_alpha, link_pred_only, model_name)
 
 
-        self.gnn = GNNEncoder(in_channels, hidden_channels)
-        self.rnn = FakeRNN()
+        self.gnn = GNNEncoder(in_channels, hidden_channels, dropout=dropout_rate)
+        self.rnn = FakeRNN(dropout=dropout_rate)
         self.link_pred = MLPDecoder(hidden_channels, 1)
         self.link_classifier = LinkTypeClassifier(hidden_channels, out_classes)
         self.save_hyperparameters()

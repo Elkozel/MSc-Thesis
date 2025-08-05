@@ -10,8 +10,9 @@ from torch_geometric.utils import batched_negative_sampling
 from torch_geometric.data import Data, Batch
 
 class GNNEncoder(nn.Module):
-    def __init__(self, in_channels, hidden_channels):
+    def __init__(self, in_channels, hidden_channels, dropout: float = 0.0):
         super().__init__()
+        self.dropout = nn.Dropout(dropout)
         self.conv1 = GCNConv(in_channels, hidden_channels)
         self.conv2 = GCNConv(hidden_channels, hidden_channels)
         self.conv3 = GCNConv(hidden_channels, hidden_channels)
@@ -19,15 +20,17 @@ class GNNEncoder(nn.Module):
     def forward(self, x, edge_index, edge_features):
         out = self.conv1(x, edge_index)
         out = F.relu(out)
+        out = self.dropout(out)
         out = self.conv2(out, edge_index)
         out = F.relu(out)
+        out = self.dropout(out)
         out = self.conv3(out, edge_index)
         return out  # node embeddings
     
 class RNNEncoder(nn.Module):
-    def __init__(self, hidden_channels, num_layers=1):
+    def __init__(self, hidden_channels, num_layers: int = 1, dropout: float = 0.0):
         super().__init__()
-        self.rnn = nn.GRU(hidden_channels, hidden_channels, num_layers=num_layers,  batch_first=True)
+        self.rnn = nn.GRU(hidden_channels, hidden_channels, num_layers=num_layers,  batch_first=True, dropout=dropout)
 
     def forward(self, x_seq):
         # x_seq shape: [num_nodes, sequence_length, hidden_channels]
@@ -97,8 +100,8 @@ class LitFullModel(L.LightningModule):
         super().__init__()
 
 
-        self.gnn = GNNEncoder(in_channels, hidden_channels)
-        self.rnn = RNNEncoder(hidden_channels, rnn_num_layers)
+        self.gnn = GNNEncoder(in_channels, hidden_channels, dropout=dropout_rate)
+        self.rnn = RNNEncoder(hidden_channels, rnn_num_layers, dropout=dropout_rate)
         self.link_pred = MLPDecoder(hidden_channels, 1)
         self.link_classifier = LinkTypeClassifier(hidden_channels, out_classes)
 
