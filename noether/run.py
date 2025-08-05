@@ -24,13 +24,15 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train and test a GNN model with Comet logging")
     
     parser.add_argument('--model', type=str, choices=["try0", 'try1', 'try2', 'try2h', 'try3'],
-                        help="Model type to use", default="try2")
+                        help="Model to use", default="try2")
     parser.add_argument('--dataset', type=str, choices=["UWF22", "UWF22h", "UWF22Fall", "UWF24", "UWF24Fall", 'LANL'],
                         help="Dataset to use", default="UWF22")
     parser.add_argument('--bin-size', type=int, default=10,
                         help="The size of bins used during training")
     parser.add_argument('--batch-size', type=int, default=450,
                         help="The size of batches used during training")
+    parser.add_argument('--dropout', type=float, default=0.0,
+                        help="The dropout rate used")    
     parser.add_argument('--account-for-duration', action=argparse.BooleanOptionalAction,
                         help="Whether extra records should be added to account for connections, which are bigger \
                             than the bin size", default=False)
@@ -48,7 +50,7 @@ def parse_args():
     parser.add_argument('--devices', default="auto",
                         help="The amount of devices used by the Trainer")
     parser.add_argument('--accelerator', default="auto",
-                        help="The accelerater used for training")
+                        help="The accelerator used for training")
     parser.add_argument('--num-workers', default=0,
                         help="The amount of workers used by the dataloader")
     parser.add_argument('--dataset-folder', type=str, default="/data/datasets",
@@ -148,20 +150,21 @@ def main():
         dataset.node_features + 2,
         dataset.node_features * 3,
         out_classes = dataset.num_classes,
-        dropout_rate = 0.0
+        dropout_rate = args.dropout
         )
     elif args.model == "try1":
         model = Try1(
         dataset.node_features + 2,
         dataset.node_features + 2 * 3,
         out_classes = dataset.num_classes,
-        dropout_rate = 0.0
+        dropout_rate = args.dropout
         )
     elif args.model == "try2":
         model = Try2(
         dataset.node_features + 2,
         out_classes = dataset.num_classes,
         pred_alpha = 1.1,
+        dropout_rate = args.dropout,
         edge_dim = dataset.edge_features
         )
     elif args.model == "try2h":
@@ -180,6 +183,7 @@ def main():
         dataset.node_features,
         out_classes = dataset.num_classes,
         pred_alpha = 1.1,
+        dropout_rate = args.dropout,
         edge_dim = dataset.edge_features
         )
     else:
