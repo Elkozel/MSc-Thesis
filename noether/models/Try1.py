@@ -1,4 +1,5 @@
 import warnings
+import math
 import torch
 import torchmetrics
 import torch.nn as nn
@@ -178,7 +179,7 @@ class LitFullModel(L.LightningModule):
         gnn_features = self.gnn(data.x, data.edge_index, data.edge_attr)
         data.x = gnn_features # [Host* , hidden_dim]
 
-        # RNN
+        ### RNN Stuff ###
         # Important assumption, the X axis is the same on all graphs
 
         # Create a batch for each sliding window to be run trough the RNN (in one run)
@@ -210,7 +211,7 @@ class LitFullModel(L.LightningModule):
         edge_batch = data.batch[edge_sources]
         positive_edges = data.edge_index[:, edge_batch >= self.rnn_window_size] # Only grab edges after the starting window
                                                                                 # Other edges are not relevant
-        positive_edge_labels = data.y[edge_batch >= self.rnn_window_size]
+        positive_edge_labels: torch.Tensor = data.y[edge_batch >= self.rnn_window_size]
 
         if positive_edges.size(1) == 0:
             raise NoPositiveEdgesException(f"Positive edges are {positive_edges.size(1)}")
@@ -249,8 +250,14 @@ class LitFullModel(L.LightningModule):
         class_loss = F.cross_entropy(link_class, edge_class_labels.long(), weight=weights)
 
         # Confidence loss
-        # conf_weighted_class_loss = F.cross_entropy(link_class, edge_class_labels.long(), reduction='none')
-        # conf_weighted_class_loss = (conf_weighted_class_loss * link_pred_probs.squeeze()).mean()
+        conf_weighted_class_loss = F.cross_entropy(link_class, edge_class_labels.long(), reduction='none')
+        conf_weighted_class_loss = (conf_weighted_class_loss * link_pred_probs.squeeze()).mean()
+
+        # Loss v2
+        mal_count = positive_edge_labels.count_nonzero().item()
+        edge_count = positive_edge_labels.size(dim=0)
+        mal_percentage = max(mal_count/edge_count, 0.2)
+        loss_v2 = pred_loss * (1-mal_percentage) + class_loss * mal_percentage
         
         if self.link_pred_only:
             loss = pred_loss
@@ -315,6 +322,10 @@ class LitFullModel(L.LightningModule):
 
         return {
             "loss": loss,
+            "pred_loss": pred_loss,
+            "class_loss": class_loss,
+            "confidence_loss": conf_weighted_class_loss,
+            "lossv2": loss_v2,
             "mal_count": data.y.count_nonzero().float(),
             "benign_count": data.y.size(0) - int(data.y.count_nonzero()),
             "edge_count": positive_edges.size(1),
