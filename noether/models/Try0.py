@@ -5,8 +5,9 @@ from torch_geometric.nn import GCNConv
 from models.Try1 import LitFullModel as Try1
 
 class GNNEncoder(nn.Module):
-    def __init__(self, in_channels, hidden_channels):
+    def __init__(self, in_channels, hidden_channels, dropout: float = 0.0):
         super().__init__()
+        self.dropout = nn.Dropout(dropout)
         self.conv1 = GCNConv(in_channels, hidden_channels)
         self.conv2 = GCNConv(hidden_channels, hidden_channels)
         self.conv3 = GCNConv(hidden_channels, hidden_channels)
@@ -14,14 +15,24 @@ class GNNEncoder(nn.Module):
     def forward(self, x, edge_index, edge_features):
         out = self.conv1(x, edge_index)
         out = F.relu(out)
+        out = self.dropout(out)
         out = self.conv2(out, edge_index)
         out = F.relu(out)
+        out = self.dropout(out)
         out = self.conv3(out, edge_index)
         return out  # node embeddings
     
 class FakeRNN(nn.Module):
-    def forward(self, x_seq):
-        return x_seq
+    def __init__(self, dropout: float = 0.0):
+        super().__init__()
+
+    def forward(self, x, h_0=None):
+        # Mimic output shape: [Batch * Node, Window, Feature]
+        output = x  # No transformation
+
+        # Mimic returning (output, hidden)
+        # Hidden could be last timestep for GRU/LSTM, but here it's None or just a copy
+        return output, h_0
     
 class MLPDecoder(nn.Module):
     def __init__(self, embed_dim: int, out_dim: int = 1, hidden_dim: int = 128):
@@ -41,7 +52,7 @@ class LinkTypeClassifier(nn.Module):
     def __init__(self, input_dim, num_classes):
         super().__init__()
         self.mlp = nn.Sequential(
-            nn.Linear(input_dim * 2, input_dim),
+            nn.Linear(input_dim * 2 + 1, input_dim),
             nn.ReLU(),
             nn.Linear(input_dim, num_classes)
         )
@@ -80,13 +91,17 @@ class LitFullModel(Try1):
         binary_threshold = 0.5,
         negative_edge_sampling_min = 20,
         pred_alpha = 0.8,
+        link_pred_only = False,
+        loss_fun_name: str = "alpha",
         model_name="Try0"
     ):
-        super().__init__(in_channels, hidden_channels, dropout_rate, out_classes, rnn_window_size, rnn_num_layers, binary_threshold, negative_edge_sampling_min, pred_alpha, model_name)
+        super().__init__(in_channels, hidden_channels, dropout_rate, out_classes, rnn_window_size, 
+                         rnn_num_layers, binary_threshold, negative_edge_sampling_min, pred_alpha, 
+                         link_pred_only, loss_fun_name, model_name)
 
 
-        self.gnn = GNNEncoder(in_channels, hidden_channels)
-        self.rnn = FakeRNN()
+        self.gnn = GNNEncoder(in_channels, hidden_channels, dropout=dropout_rate)
+        self.rnn = FakeRNN(dropout=dropout_rate)
         self.link_pred = MLPDecoder(hidden_channels, 1)
         self.link_classifier = LinkTypeClassifier(hidden_channels, out_classes)
         self.save_hyperparameters()

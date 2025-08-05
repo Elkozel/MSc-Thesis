@@ -24,25 +24,38 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train and test a GNN model with Comet logging")
     
     parser.add_argument('--model', type=str, choices=["try0", 'try1', 'try2', 'try2h', 'try3'],
-                        help="Model type to use", default="try2")
+                        help="Model to use", default="try2")
     parser.add_argument('--dataset', type=str, choices=["UWF22", "UWF22h", "UWF22Fall", "UWF24", "UWF24Fall", 'LANL'],
                         help="Dataset to use", default="UWF22")
+    parser.add_argument('--bin-size', type=int, default=10,
+                        help="The size of bins used during training")
+    parser.add_argument('--batch-size', type=int, default=450,
+                        help="The size of batches used during training")
+    parser.add_argument('--dropout', type=float, default=0.0,
+                        help="The dropout rate used")
+    parser.add_argument('--loss-function', type=str, default="alpha",
+                        help="The name of the loss function to use")
+    
     parser.add_argument('--account-for-duration', action=argparse.BooleanOptionalAction,
                         help="Whether extra records should be added to account for connections, which are bigger \
-                            than the bin size", default=True)
+                            than the bin size", default=False)
+    parser.add_argument('--link-prediction-only', action=argparse.BooleanOptionalAction,
+                        help="Whether to only concentrate on link prediction", default=False)
     parser.add_argument('--shuffle', action=argparse.BooleanOptionalAction,
                         help="Whether the dataset should be shuffled", default=False)
     parser.add_argument('--shuffle-type', type=str, choices=["day", "random"],
-                        help="The type of shuffling to be applied", default="day")
+                        help="The type of shuffling to be applied", default="random")
     parser.add_argument('--shuffle-bin-size', type=float, default=0.1,
                         help="The size of the bins used during the shuffling process")
     parser.add_argument('--shuffle-every-time', action=argparse.BooleanOptionalAction,
-                        help="Whether to reshuffle the dataset if it has already been shuffled previously", default=False)
+                        help="Whether to reshuffle the dataset if it has already been shuffled previously", default=True)
 
-    parser.add_argument('--max-epochs', type=int, default=50,
+    parser.add_argument('--max-epochs', type=int, default=10,
                         help="Maximum number of training epochs")
-    parser.add_argument('--num-devices', default="auto",
+    parser.add_argument('--devices', default="auto",
                         help="The amount of devices used by the Trainer")
+    parser.add_argument('--accelerator', default="auto",
+                        help="The accelerator used for training")
     parser.add_argument('--num-workers', default=0,
                         help="The amount of workers used by the dataloader")
     parser.add_argument('--dataset-folder', type=str, default="/data/datasets",
@@ -73,8 +86,8 @@ def main():
 
     if args.dataset == "UWF22":
         dataset = UWF22(args.dataset_folder,
-                         bin_size=10,
-                         batch_size=450,
+                         bin_size=args.bin_size,
+                         batch_size=args.batch_size,
                          account_for_duration=args.account_for_duration,
                          shuffle=args.shuffle,
                          shuffle_every_time=args.shuffle_every_time,
@@ -85,14 +98,14 @@ def main():
     elif args.dataset == "UWF22h":
         transformations = []
         dataset = UWF22H(args.dataset_folder,
-                         bin_size=10,
-                         batch_size=60,
+                         bin_size=args.bin_size,
+                         batch_size=args.batch_size,
                          transforms=transformations,
                          num_workers=args.num_workers)
     elif args.dataset == "UWF22Fall":
         dataset = UWF22Fall(args.dataset_folder,
-                         bin_size=10,
-                         batch_size=450,
+                         bin_size=args.bin_size,
+                         batch_size=args.batch_size,
                          account_for_duration=args.account_for_duration,
                          shuffle=args.shuffle,
                          shuffle_every_time=args.shuffle_every_time,
@@ -102,8 +115,8 @@ def main():
                          num_workers=args.num_workers)
     elif args.dataset == "UWF24":
         dataset = UWF24(args.dataset_folder,
-                         bin_size=10,
-                         batch_size=450,
+                         bin_size=args.bin_size,
+                         batch_size=args.batch_size,
                          account_for_duration=args.account_for_duration,
                          shuffle=args.shuffle,
                          shuffle_every_time=args.shuffle_every_time,
@@ -113,8 +126,8 @@ def main():
                          num_workers=args.num_workers)
     elif args.dataset == "UWF24Fall":
         dataset = UWF24Fall(args.dataset_folder,
-                         bin_size=10,
-                         batch_size=450,
+                         bin_size=args.bin_size,
+                         batch_size=args.batch_size,
                          account_for_duration=args.account_for_duration,
                          shuffle=args.shuffle,
                          shuffle_every_time=args.shuffle_every_time,
@@ -130,8 +143,9 @@ def main():
         ]
         dataset = LANLL(
             args.dataset_folder,
-            bin_size=20,
-            batch_size=100,
+            bin_size=args.bin_size,
+            batch_size=args.batch_size,
+            lanl_URL="https://csr.lanl.gov/data-fence/1754169558/LJLbi4Mzkx-9QNYWlGpnnBuzR5k=/cyber1/",
             transforms=transformations)
     else:
         raise NotImplementedError(f"Dataset {args.dataset} is not implemented")
@@ -141,21 +155,28 @@ def main():
         dataset.node_features + 2,
         dataset.node_features * 3,
         out_classes = dataset.num_classes,
-        dropout_rate = 0.0
+        dropout_rate = args.dropout,
+        link_pred_only=args.link_prediction_only,
+        loss_fun_name=args.loss_function
         )
     elif args.model == "try1":
         model = Try1(
         dataset.node_features + 2,
         dataset.node_features + 2 * 3,
         out_classes = dataset.num_classes,
-        dropout_rate = 0.0
+        dropout_rate = args.dropout,
+        link_pred_only=args.link_prediction_only,
+        loss_fun_name=args.loss_function
         )
     elif args.model == "try2":
         model = Try2(
         dataset.node_features + 2,
         out_classes = dataset.num_classes,
         pred_alpha = 1.1,
-        edge_dim = dataset.edge_features
+        dropout_rate = args.dropout,
+        edge_dim = dataset.edge_features,
+        link_pred_only=args.link_prediction_only,
+        loss_fun_name=args.loss_function
         )
     elif args.model == "try2h":
         model = Try2H(
@@ -173,7 +194,10 @@ def main():
         dataset.node_features,
         out_classes = dataset.num_classes,
         pred_alpha = 1.1,
-        edge_dim = dataset.edge_features
+        dropout_rate = args.dropout,
+        edge_dim = dataset.edge_features,
+        link_pred_only=args.link_prediction_only,
+        loss_fun_name=args.loss_function
         )
     else:
         raise NotImplementedError(f"Model {args.model} is not implemented")
@@ -188,7 +212,8 @@ def main():
     torch.set_float32_matmul_precision('high')
 
     trainer = L.Trainer(max_epochs = args.max_epochs,
-                        devices=args.num_devices,
+                        devices=args.devices,
+                        accelerator=args.accelerator,
                         logger=comet_logger,  # type: ignore
                         log_every_n_steps=1,
                         default_root_dir=args.trainer_folder,
