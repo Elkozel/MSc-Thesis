@@ -147,16 +147,17 @@ class LANLL(L.LightningDataModule):
                 'authentication orientation',
                 'success/failure'
             ]
-            pl.scan_csv(self.auth_file["csv"],
+            df = pl.scan_csv(self.auth_file["csv"],
                         has_header=False,
                         low_memory=True,
-                        new_columns=columns)\
-            .with_columns(
+                        new_columns=columns)
+            df = df.with_columns(
                 pl.col("authentication type").cast(auth_type_enum).alias("authentication type"),
                 pl.col("logon type").cast(logon_type_enum).alias("logon type"),
                 pl.col("authentication orientation").cast(auth_orient_enum).alias("authentication orientation"),
                 pl.col("success/failure").cast(result_enum).alias("success/failure"),
-            ).sink_parquet( 
+            )
+            df.sink_parquet( 
                 self.auth_file["parquet"],
                 compression="uncompressed",
                 row_group_size=2_000_000
