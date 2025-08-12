@@ -143,8 +143,10 @@ class LitFullModel(L.LightningModule):
         self.binary_threshold = binary_threshold
         self.negative_edge_sampling_min = negative_edge_sampling_min
         self.pred_alpha = pred_alpha
-        self.link_pred_only = link_pred_only
-        self.loss_fun_name = loss_fun_name
+        if link_pred_only:
+            self.loss_fun_name = "pred_only"
+        else:
+            self.loss_fun_name = loss_fun_name
 
         self.save_hyperparameters()
 
