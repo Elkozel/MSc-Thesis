@@ -88,7 +88,7 @@ class LitFullModel(Try1):
         edge_dim = None,
         out_classes = 1,
         rnn_window_size = 30,
-        rnn_num_layers = 1,
+        rnn_num_layers = 5,
         binary_threshold = 0.5,
         negative_edge_sampling_min = 20,
         pred_alpha = 0.8,
