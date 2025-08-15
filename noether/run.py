@@ -170,7 +170,7 @@ def main():
         )
     elif args.model == "try2":
         model = Try2(
-        dataset.node_features + 2 * 3,
+        dataset.node_features + 2,
         out_classes = dataset.num_classes,
         pred_alpha = 1.1,
         dropout_rate = args.dropout,
