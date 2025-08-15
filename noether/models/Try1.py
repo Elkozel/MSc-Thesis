@@ -1,4 +1,5 @@
 import warnings
+import math
 import torch
 import torchmetrics
 import torch.nn as nn
@@ -10,8 +11,9 @@ from torch_geometric.utils import batched_negative_sampling
 from torch_geometric.data import Data, Batch
 
 class GNNEncoder(nn.Module):
-    def __init__(self, in_channels, hidden_channels):
+    def __init__(self, in_channels, hidden_channels, dropout: float = 0.0):
         super().__init__()
+        self.dropout = nn.Dropout(dropout)
         self.conv1 = GCNConv(in_channels, hidden_channels)
         self.conv2 = GCNConv(hidden_channels, hidden_channels)
         self.conv3 = GCNConv(hidden_channels, hidden_channels)
@@ -19,15 +21,17 @@ class GNNEncoder(nn.Module):
     def forward(self, x, edge_index, edge_features):
         out = self.conv1(x, edge_index)
         out = F.relu(out)
+        out = self.dropout(out)
         out = self.conv2(out, edge_index)
         out = F.relu(out)
+        out = self.dropout(out)
         out = self.conv3(out, edge_index)
         return out  # node embeddings
     
 class RNNEncoder(nn.Module):
-    def __init__(self, hidden_channels, num_layers=1):
+    def __init__(self, hidden_channels, num_layers: int = 1, dropout: float = 0.0):
         super().__init__()
-        self.rnn = nn.GRU(hidden_channels, hidden_channels, num_layers=num_layers,  batch_first=True)
+        self.rnn = nn.GRU(hidden_channels, hidden_channels, num_layers=num_layers,  batch_first=True, dropout=dropout)
 
     def forward(self, x_seq):
         # x_seq shape: [num_nodes, sequence_length, hidden_channels]
@@ -91,13 +95,15 @@ class LitFullModel(L.LightningModule):
         binary_threshold = 0.5,
         negative_edge_sampling_min = 20,
         pred_alpha = 1.2,
+        link_pred_only = False,
+        loss_fun_name: str = "alpha",
         model_name="Try1"
     ):
         super().__init__()
 
 
-        self.gnn = GNNEncoder(in_channels, hidden_channels)
-        self.rnn = RNNEncoder(hidden_channels)
+        self.gnn = GNNEncoder(in_channels, hidden_channels, dropout=dropout_rate)
+        self.rnn = RNNEncoder(hidden_channels, rnn_num_layers, dropout=dropout_rate)
         self.link_pred = MLPDecoder(hidden_channels, 1)
         self.link_classifier = LinkTypeClassifier(hidden_channels, out_classes)
 
@@ -137,6 +143,10 @@ class LitFullModel(L.LightningModule):
         self.binary_threshold = binary_threshold
         self.negative_edge_sampling_min = negative_edge_sampling_min
         self.pred_alpha = pred_alpha
+        if link_pred_only:
+            self.loss_fun_name = "pred_only"
+        else:
+            self.loss_fun_name = loss_fun_name
 
         self.save_hyperparameters()
 
@@ -173,7 +183,7 @@ class LitFullModel(L.LightningModule):
         gnn_features = self.gnn(data.x, data.edge_index, data.edge_attr)
         data.x = gnn_features # [Host* , hidden_dim]
 
-        # RNN
+        ### RNN Stuff ###
         # Important assumption, the X axis is the same on all graphs
 
         # Create a batch for each sliding window to be run trough the RNN (in one run)
@@ -203,7 +213,9 @@ class LitFullModel(L.LightningModule):
         # Create positive and negative edge indecies
         edge_sources = data.edge_index[0]
         edge_batch = data.batch[edge_sources]
-        positive_edges = data.edge_index[:, edge_batch >= self.rnn_window_size] # Only grab edges from 
+        positive_edges = data.edge_index[:, edge_batch >= self.rnn_window_size] # Only grab edges after the starting window
+                                                                                # Other edges are not relevant
+        positive_edge_labels: torch.Tensor = data.y[edge_batch >= self.rnn_window_size]
 
         if positive_edges.size(1) == 0:
             raise NoPositiveEdgesException(f"Positive edges are {positive_edges.size(1)}")
@@ -217,11 +229,11 @@ class LitFullModel(L.LightningModule):
             negative_edges.int()
         ], dim=1)
         edge_pred_labels = torch.cat([
-            torch.ones(positive_edges.size(1)),
-            torch.zeros(negative_edges.size(1))
+            (positive_edge_labels == 0).int(),
+            torch.zeros(negative_edges.size(1)).to(self.device)
         ]).to(self.device)
         edge_class_labels = torch.cat([
-            data.y[edge_batch >= self.rnn_window_size],
+            positive_edge_labels,
             torch.zeros(negative_edges.size(1)).to(self.device)
         ]).to(self.device)
 
@@ -236,59 +248,49 @@ class LitFullModel(L.LightningModule):
 
         # Calculate loss
         pred_loss = F.binary_cross_entropy_with_logits(link_pred_logits, edge_pred_labels.float())
-        weights = torch.nn.functional.normalize(torch.Tensor([1] + [
-            3 for _ in range(self.out_classes - 1)
-        ]), dim=0).to(self.device)
+        weights = torch.Tensor([1] + [
+            5 for _ in range(self.out_classes - 1)
+        ]).to(self.device)
         class_loss = F.cross_entropy(link_class, edge_class_labels.long(), weight=weights)
 
         # Confidence loss
-        # conf_weighted_class_loss = F.cross_entropy(link_class, edge_class_labels.long(), reduction='none')
-        # conf_weighted_class_loss = (conf_weighted_class_loss * link_pred_probs.squeeze()).mean()
-        
-        loss = pred_loss * self.pred_alpha +  class_loss
+        confidence_class_loss = F.cross_entropy(link_class, edge_class_labels.long(), reduction='none')
+        confidence_class_loss = (confidence_class_loss * link_pred_probs.squeeze()).mean()
 
+        # Loss v2
+        mal_count = positive_edge_labels.count_nonzero().item()
+        edge_count = positive_edge_labels.size(dim=0)
+        mal_percentage = max(mal_count/edge_count, 0.2)
+        loss_v2 = pred_loss * (1-mal_percentage) + class_loss * mal_percentage
+        
+        match self.loss_fun_name:
+            case "pred_only":
+                loss = pred_loss
+            case "alpha":
+                loss = pred_loss * self.pred_alpha +  class_loss
+            case "v2":
+                loss = loss_v2
+            case "confidence":
+                loss = confidence_class_loss
+            case _:
+                raise Exception(f"Unsupported loss name {self.loss_fun_name}")
 
         # Metrics from link prediction
         for name, metric in self.link_pred_metrics.items():
-            # If you give the AUROC metrics only true labels, 
-            # it compains
-            if name.endswith("_auc") or name.endswith("_ap"):
-                # So we skip when only true labels are present
-                if edge_class_labels.sum() == 0:
-                    continue
             metric(link_pred_logits, edge_pred_labels.int())
 
         # Metrics from link classification
         for name, metric in self.link_class_metrics.items():
-            # If you give the AUROC metrics only true labels, 
-            # it compains
-            if name.endswith("_auc") or name.endswith("_ap"):
-                # So we skip when only true labels are present
-                if edge_class_labels.sum() == 0:
-                    continue
             metric(link_class, edge_class_labels.int())
 
         # Metrics from overall malicious event prediction
         malicious_event_mask = (edge_class_labels > 0.5).int()
 
-        for name, metric in self.mal_metrics.items():
-            # If you give the AUROC metrics only true labels, 
-            # it compains
-            if name.endswith("_auc") or name.endswith("_ap"):
-                # So we skip when only true labels are present
-                if edge_class_labels.sum() == 0:
-                    continue
-            
+        for name, metric in self.mal_metrics.items():            
             metric((torch.argmax(link_class, dim=1) > 0.5).float(), malicious_event_mask)
 
         # Metrics from only malicious events        
         for name, metric in self.mal_only_metrics.items():
-            # If you give the AUROC metrics only true labels, 
-            # it compains
-            if name.endswith("_auc") or name.endswith("_ap"):
-                # So we skip when only true labels are present
-                if edge_class_labels.sum() == 0:
-                    continue
             if malicious_event_mask.sum() > 0:
                 expanded_malicious_event_mask = malicious_event_mask.reshape(malicious_event_mask.size(0),1).expand(link_class.shape).bool()
                 malicious_labels = torch.masked_select(edge_class_labels, malicious_event_mask.bool())
@@ -331,6 +333,10 @@ class LitFullModel(L.LightningModule):
 
         return {
             "loss": loss,
+            "pred_loss": pred_loss,
+            "class_loss": class_loss,
+            "confidence_loss": confidence_class_loss,
+            "lossv2": loss_v2,
             "mal_count": data.y.count_nonzero().float(),
             "benign_count": data.y.size(0) - int(data.y.count_nonzero()),
             "edge_count": positive_edges.size(1),

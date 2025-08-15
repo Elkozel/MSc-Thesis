@@ -1,5 +1,6 @@
 tqdm
 pandas
+polars
 pyarrow
 comet_ml
 lightning[extra]

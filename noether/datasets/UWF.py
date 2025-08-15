@@ -1,15 +1,12 @@
 from multiprocessing.pool import ThreadPool
 import os
-import inspect
-import math
 import logging
-from typing import Any, Callable, Generator, List, Literal, Optional, Union
+from typing import Literal, Union
 import requests
 import torch
 import numpy as np
 from tqdm.auto import tqdm
-import pandas as pd
-from ordered_set import OrderedSet
+import polars as pl
 from torch.utils.data import DataLoader
 from torch.utils.data import random_split, TensorDataset
 from torch_geometric.data import Data, HeteroData
@@ -21,6 +18,13 @@ from transforms.EnrichHost import EnrichHost
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+service_enum = pl.Enum(['dce_rpc,ntlm,smb,gssapi', 'dce_rpc', 'dce_rpc,smb,gssapi,ntlm', 'gssapi', 'smb,gssapi,ntlm', 'gssapi,dce_rpc,smb,ntlm', 'ssl', 'ntlm,gssapi,dce_rpc,smb', 'dhcp', 'smb', 'dns', "None", 'smb,dce_rpc,ntlm,gssapi', 'ntlm,smb,gssapi', 'ntp', 'ssh', 'gssapi,smb,ntlm', 'gssapi,smb', 'smb,gssapi', 'radius', 'ntlm,dce_rpc,gssapi,smb', 'krb_tcp', 'gssapi,dce_rpc,ntlm,smb', 'gssapi,smb,ntlm,dce_rpc', 'gssapi,smb,dce_rpc,ntlm', 'ftp', 'snmp', 'smb,ntlm,gssapi', 'ntlm,dce_rpc,smb,gssapi', 'ntlm,gssapi,smb', 'gssapi,ntlm,smb', 'http'])
+proto_enum = pl.Enum(['icmp', 'udp', 'tcp'])
+conn_state_enum = pl.Enum(['RSTO', 'S1', 'RSTRH', 'RSTR', 'SHR', 'S3', 'OTH', 'SH', 'S2', 'REJ', 'S0', 'SF'])
+conn_status_enum = pl.Enum(['starting', 'open', 'closing'])
+label_tactic_enum = pl.Enum(['none', 'Privilege Escalation', 'Collection', 'Initial Access', 'Credential Access', 'Resource Development', 'Lateral Movement', 'Command and Control', 'Execution', 'Defense Evasion', 'Persistence', 'Discovery', 'Exfiltration', 'Reconnaissance'])
+
 
 class UWF22(L.LightningDataModule):
 
@@ -52,7 +56,7 @@ class UWF22(L.LightningDataModule):
         {
             "url": "https://datasets.uwf.edu/data/UWF-ZeekData22/parquet/2022-02-06%20-%202022-02-13/part-00000-df678a79-4a73-452b-8e72-d624b2732f17-c000.snappy.parquet",
             "raw_file": "6.parquet"
-        },
+        },        
         {
             "url": "https://datasets.uwf.edu/data/UWF-ZeekData22/parquet/2022-02-13%20-%202022-02-20/part-00000-1da06990-329c-4e38-913a-0f0aa39b388d-c000.snappy.parquet",
             "raw_file": "7.parquet"
@@ -88,7 +92,7 @@ class UWF22(L.LightningDataModule):
         self.save_hyperparameters()
         self.node_features = 6
         self.edge_features = 14
-        self.num_classes = 11
+        self.num_classes = 14
 
     
     def download_file(self, url, filepath, tqdm_pos=0):
@@ -135,32 +139,68 @@ class UWF22(L.LightningDataModule):
             # Use map to apply download_file to all argument tuples in parallel
             pool.map(lambda x: self.download_file(*x), args)
 
+    def generate_maps(self):
+        # Check if the maps are already generated
+        if os.path.exists(os.path.join(self.data_dir, "services.parquet")) and \
+            os.path.exists(os.path.join(self.data_dir, "hosts.parquet")):
+            return  # If so, skip
+        
+        service_map = set([])
+        host_map = set([])
+
+        for file in self.download_data:
+            filename = file["raw_file"]
+            df = pl.read_parquet(os.path.join(self.data_dir, filename))
+
+            src_host = df.select("src_ip_zeek").unique().to_series()
+            dest_host = df.select("dest_ip_zeek").unique().to_series()
+            host_map.update(src_host)
+            host_map.update(dest_host)
+
+            src_services = df.select(["src_ip_zeek", "src_port_zeek"]).unique().rows()
+            dest_services = df.select(["dest_ip_zeek", "dest_port_zeek"]).unique().rows()
+            service_map.update(src_services)
+            service_map.update(dest_services)
+
+        # Save maps
+        s_map = pl.DataFrame(list(zip(*service_map)), schema=["host", "port"])\
+            .write_parquet(os.path.join(self.data_dir, "services.parquet"))
+        h_map = pl.DataFrame(list(host_map), schema=["host"])\
+            .write_parquet(os.path.join(self.data_dir, "hosts.parquet"))
+
+
     def prepare_data(self):
         # Make sure the data dir is there
         os.makedirs(self.data_dir, exist_ok=True)
         # Download files if nesessary
         self.download_all_files()
+        # Generate maps
+        self.generate_maps()
 
-    def generate_split_file(self, df: pd.DataFrame):
+
+    def generate_split_file(self, df: pl.LazyFrame) -> torch.Tensor:
+        # Make time relative
+        df = df.with_columns(
+            ts = pl.col("ts") - self.ts_first_event
+        )
+        
+        # Expland for duration
         df = self.expand_duration(df)
 
-        # Make time relative
-        df["ts"] = df["ts"] - self.ts_first_event
-        
         # Filter only the timestamps we care about
-        df = df[(df["ts"] >= self.from_time) & (df["ts"] < self.to_time)]
-        if df.empty:
-            return torch.empty(0)
+        df = df.filter(
+            (pl.col("ts") >= self.from_time) & (pl.col("ts") < self.to_time)
+        )
 
         # Calculate bins
-        from_bin = df["ts"].min() // self.bin_size
-        to_bin = df["ts"].max() // self.bin_size
-        from_batch = from_bin // self.batch_size
-        to_batch = to_bin // self.batch_size
+        df = df.with_columns(
+            batch = pl.col("ts") // self.bin_size // self.batch_size
+        )
+        batches = df.select("batch").unique().collect().to_series()
+        num_batches = batches.len()
 
         # Randomly split the indices into training (60%), validation (25%), and test (15%) sets
         generator = torch.Generator().manual_seed(42)
-        num_batches = int(to_batch - from_batch + 1)
 
         # Create full batch index tensor for this file
         full_idx = torch.arange(num_batches)
@@ -176,9 +216,19 @@ class UWF22(L.LightningDataModule):
         return batch_mask
         
     def setup(self, stage: str):
+        # Get the host and service maps
+        self.hostmap = pl.read_parquet(os.path.join(self.data_dir, "hosts.parquet"))
+        self.hostmap = pl.DataFrame([
+            EnrichHost.enrich_host(host[0], id) for id, host in enumerate(self.hostmap.iter_rows())
+        ])
+        self.host_enum = pl.Enum(self.hostmap.select("ip").to_series())
+
+        self.servicemap = pl.scan_parquet(os.path.join(self.data_dir, "services.parquet"))
+        
+        # Generate batch split
         for file in self.download_data:
             filename = file["raw_file"]
-            df = pd.read_parquet(os.path.join(self.data_dir, filename), columns=["ts", "duration"])
+            df = pl.scan_parquet(os.path.join(self.data_dir, filename))
 
             # Generate the batch masks
             batch_mask = self.generate_split_file(df)
@@ -189,149 +239,148 @@ class UWF22(L.LightningDataModule):
             data = transform(data)
         return data
     
-    def expand_duration(self, df: pd.DataFrame):
+    def expand_duration(self, df: pl.LazyFrame):
         if not self.account_for_duration:
-            df["conn_status"] = "closing"
-            return df
-        
+            df = df.with_columns(
+                conn_status = pl.lit("closing")
+            )
+            return df        
+
         def expand(x):
-            duration = x["duration"]
-            end_ts = x["ts"]
+            duration = x[0]
+            end_ts = x[1]
+            if duration is None:
+                return (["closing"], [end_ts])
+            
             start_ts = float(end_ts - duration)
             
             # Otherwise, determine how many adjustments will need to be made
             all_ts = np.arange(start_ts, end_ts, self.bin_size)[:-1] # cut the last one (we already have the original event)
             all_ts = np.append(all_ts, end_ts) # add the original event
 
-            open_conn_states = ["open" for _ in range(all_ts.size - 2)]
-            all_conn_states = ["started"] + open_conn_states + ["closing"]
+            start_conn_status = ["starting"] if all_ts.size > 1 else []
 
-            return pd.Series([all_ts, all_conn_states], index=['ts', 'conn_status'])
+            open_conn_status = ["open" for _ in range(all_ts.size - 2)]
+            all_conn_status = start_conn_status + open_conn_status + ["closing"]
+
+            return (all_conn_status, list(all_ts))
         
-        df["conn_status"] = "closing"
-        df["ts"] = df["ts"].astype("object")
-        mask = (df["duration"] > self.bin_size)
-        df.loc[mask, ["ts", "conn_status"]] = df[mask].apply(expand, axis=1)
-        df = df.explode(["ts", "conn_status"])
+        additional_df = df.select(["duration", "ts"]).collect().map_rows(expand).lazy()
 
-        # Recast to a float
-        df["ts"] = df["ts"].astype("float")
+        df = pl.concat([df, additional_df], how="horizontal")
 
-        # Remove events with negative ts
-        df = df[df["ts"] >= 0.0]
+        # Apply expansion as list columns        
+        df = df.with_columns(
+            conn_status = pl.col("column_0").cast(pl.List(pl.String)),
+            ts = pl.col("column_1").cast(pl.List(pl.Float32))
+        ).drop([
+            "column_0", "column_1"
+        ])
 
-        # Sort by time
-        df = df.sort_values(by=['ts'])  # Sort records chronologically
-        df = df.reset_index(drop=True)  # Reset index after sorting
+        # Explode
+        df = df.explode(["ts", "conn_status"]) \
+            .with_columns(
+                ts = pl.col("ts")
+            ).filter(
+                pl.col("ts") >= 0.0
+            ).sort("ts")
 
         return df
     
-    def bin_df(self, df: pd.DataFrame, keyword_map = None) -> pd.DataFrame:
-        df = self.expand_duration(df)
-
-        # Maps for each column are also created automatically
-        if keyword_map is None:
-            self.keyword_map = {col: OrderedSet([]) for col in self.factorize_cols}
-            self.hostmap = OrderedSet([])
-            self.servicemap = OrderedSet([])
-
-        # Ensure that the label mask starts with "none"
-        self.keyword_map["label_tactic"].update(["none"])
+    def bin_df(self, df: pl.LazyFrame) -> pl.LazyFrame:
+        # Ensure 'time' is numeric
+        df = df.with_columns(
+            pl.col("ts").drop_nans()
+        )
 
         # Make time relative
-        df["abs_ts"] = df["ts"]
-        df["ts"] = df["ts"] - self.ts_first_event
-
-        # Ensure 'time' is numeric
-        df['ts'] = pd.to_numeric(df['ts'], errors='coerce')
-        df.dropna(subset=['ts'], inplace=True)
-        df.sort_values(by='ts', inplace=True)
+        df = df.with_columns(
+            abs_ts = pl.col("ts"),
+            ts = pl.col("ts") - self.ts_first_event
+        )
+        
+        # Expand events
+        df = self.expand_duration(df)
 
         # Find only data between the time given
-        df = df[(df["ts"] >= self.from_time) & (df["ts"] < self.to_time)]
-        if df.empty:
-            return pd.DataFrame([], columns=df.columns, dtype="int64")
+        df = df.filter(
+            (pl.col("ts") >= self.from_time) & (pl.col("ts") < self.to_time)
+        )
 
-        # Update keyword map
-        for col in self.keyword_map:
-            self.keyword_map[col].update(df[col].fillna("None").unique()) # type: ignore
-        self.hostmap.update(df["src_ip_zeek"].fillna("None").unique()) # type: ignore
-        self.hostmap.update(df["dest_ip_zeek"].fillna("None").unique()) # type: ignore
-        self.servicemap.update(df[["src_ip_zeek", "src_port_zeek"]]
-                               .drop_duplicates()
-                               .reset_index(drop=True)
-                               .apply(lambda x: (x.iloc[0], x.iloc[1]), axis=1)) # type: ignore
-        self.servicemap.update(df[["dest_ip_zeek", "dest_port_zeek"]]
-                               .drop_duplicates()
-                               .reset_index(drop=True)
-                               .apply(lambda x: (x.iloc[0], x.iloc[1]), axis=1)) # type: ignore
-
-        # Apply the keyword map
-        for col in self.keyword_map:
-            df[col] = df[col].fillna("None").map(self.keyword_map[col].index)
-        df["src_ip_id"] = df["src_ip_zeek"].map(self.hostmap.index)
-        df["dest_ip_id"] = df["dest_ip_zeek"].map(self.hostmap.index)
-        df["src_service_id"] = df[["src_ip_zeek", "src_port_zeek"]] \
-                                .apply(lambda x: (x.iloc[0], x.iloc[1]), axis=1).map(self.servicemap.index)
-        df["dest_service_id"] = df[["dest_ip_zeek", "dest_port_zeek"]] \
-                                .apply(lambda x: (x.iloc[0], x.iloc[1]), axis=1).map(self.servicemap.index)
+        # Merge with the service map
+        df = df.join(self.servicemap.with_row_index(),
+                left_on=["src_ip_zeek", "src_port_zeek"],
+                right_on=["host", "port"],
+                how="left",
+                suffix="source",
+                validate="m:1").rename({
+                    "index": "src_service_id"
+                })
+        df = df.join(self.servicemap.with_row_index(),
+                left_on=["dest_ip_zeek", "dest_port_zeek"],
+                right_on=["host", "port"],
+                how="left",
+                suffix="destination",
+                validate="m:1").rename({
+                    "index": "dest_service_id"
+                })
+        
+        # Apply the enums
+        df = df.with_columns(
+            service = pl.col("service").cast(service_enum),
+            proto = pl.col("proto").cast(proto_enum),
+            conn_state = pl.col("conn_state").cast(conn_state_enum),
+            conn_status = pl.col("conn_status").cast(conn_status_enum),
+            label_tactic = pl.col("label_tactic").cast(label_tactic_enum),
+            src_ip_zeek = pl.col("src_ip_zeek").cast(self.host_enum),
+            dest_ip_zeek = pl.col("dest_ip_zeek").cast(self.host_enum)
+        )
 
         # Bin the data
-        df['bin'] = df['ts'] // self.bin_size
+        df = df.with_columns(
+            bin = pl.col("ts") // self.bin_size,
+        ).with_columns(
+            batch = pl.col("bin") // self.batch_size,
+        ).with_columns(
+            bin = pl.col("bin") % self.batch_size
+        )
         
         return df
-
-    def fill_in_gaps_in_batch(self, batch, starting_bin, columns):
-        previous_bin = starting_bin
-        final_batch = []
-        for bin, group in batch:
-            while bin - previous_bin > 1:
-                previous_bin += 1
-                final_batch.append(pd.DataFrame([], columns=columns, dtype="int64"))
-
-            final_batch.append(group)
-            previous_bin = bin
-
-        while len(final_batch) < self.batch_size:
-            final_batch.append(pd.DataFrame([], columns=columns, dtype="int64"))
-
-        return final_batch
         
     def generate_batches(self):
         for file in self.download_data:
             filename = os.path.join(self.data_dir, file["raw_file"])
-            df = pd.read_parquet(filename)
-            batch: list[pd.DataFrame] = []
+            df = pl.scan_parquet(filename)
             batch_mask: torch.Tensor = self.batch_mask[file["raw_file"]]
 
             df = self.bin_df(df)
-            df["batch"] = df["bin"] // self.batch_size
-            df["batch"] = df["batch"] - df["batch"].min()
-            grouped_batches = df.groupby("batch", observed=False)
+            batches = df.select("batch").unique().collect().to_series()
 
-            for batch, group in grouped_batches: # type: ignore
-                bins = group.groupby("bin")
-                corrected_batch = self.fill_in_gaps_in_batch(bins, batch*self.batch_size, df.columns)
-                yield corrected_batch, int(batch_mask[int(batch)]) # type: ignore
+            for batch_num in range(batch_mask.size(0)):
+                batch = df.filter(pl.col("batch") == batches[batch_num]).collect()
+                batch_stage = batch_mask[batch_num].item()
+                
+                final_batch = [
+                    batch.filter(pl.col("bin") == bin_num)
+                    for bin_num in range(self.batch_size)
+                ]
+                yield final_batch, batch_stage
 
-    def df_to_data(self, df: pd.DataFrame):
-        hostmap_df = pd.DataFrame([
-            EnrichHost.enrich_host(host, id) for id, host in enumerate(self.hostmap)
-        ])
+    def df_to_data(self, df: pl.DataFrame):
 
         data = Data()
-        data.time = torch.from_numpy(df["ts"].to_numpy(dtype=float)).to(dtype=torch.float64)
-        data.x = torch.from_numpy(hostmap_df[[
+        data.time = df.select("ts").to_torch(dtype=pl.Float32)
+        data.x = self.hostmap.select([
                 "internal",
                 "broadcast",
                 "multicast",
                 "ipv4",
                 "ipv6",
                 "valid",
-        ]].to_numpy()).to(torch.float32)
-        data.edge_index = torch.from_numpy(df[["src_ip_id", "dest_ip_id"]].to_numpy().T).to(torch.int64)
-        data.edge_attr = torch.nan_to_num(torch.from_numpy(df[[
-                "conn_status",
+        ]).fill_null(0).to_torch(dtype=pl.Int8)
+        data.edge_index = df.select(pl.col("src_ip_zeek").to_physical(), pl.col("dest_ip_zeek").to_physical()).to_torch(dtype=pl.Int64).T
+        data.edge_attr = df.select([
+                pl.col("conn_status").to_physical(),
                 "src_port_zeek",
                 "dest_port_zeek",
                 "orig_bytes",
@@ -342,18 +391,18 @@ class UWF22(L.LightningDataModule):
                 "local_orig",
                 "local_resp",
                 "duration",
-                "proto",
-                "service",
-                "conn_state"
+                pl.col("proto").to_physical(),
+                pl.col("service").to_physical(),
+                pl.col("conn_state").to_physical()
                 # TODO: Add info about the port
                 # TODO: Add history
-        ]].astype(float).to_numpy()).to(torch.float32))
-        data.history = df[[
+        ]).fill_null(0).to_torch(dtype=pl.Float32)
+        data.history = df.select([
                 "history"
                 # TODO: Add info about the port
                 # TODO: Add history
-        ]].to_numpy()
-        data.y = torch.from_numpy(df["label_tactic"].to_numpy()).to(torch.int64)
+        ]).to_numpy()
+        data.y = df.select(pl.col("label_tactic").to_physical()).to_torch(dtype=pl.Int8).flatten()
 
         return data
 
