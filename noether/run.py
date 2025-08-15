@@ -24,7 +24,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train and test a GNN model with Comet logging")
     
     parser.add_argument('--model', type=str, choices=["try0", 'try1', 'try2', 'try2h', 'try3'],
-                        help="Model to use", default="try2")
+                        help="Model to use", default="try0")
     parser.add_argument('--dataset', type=str, choices=["UWF22", "UWF22h", "UWF22Fall", "UWF24", "UWF24Fall", 'LANL'],
                         help="Dataset to use", default="UWF22")
     parser.add_argument('--bin-size', type=int, default=10,
@@ -153,7 +153,7 @@ def main():
     if args.model == "try0":
         model = Try0(
         dataset.node_features + 2,
-        dataset.node_features * 3,
+        dataset.node_features + 2 * 3,
         out_classes = dataset.num_classes,
         dropout_rate = args.dropout,
         link_pred_only=args.link_prediction_only,
@@ -170,7 +170,7 @@ def main():
         )
     elif args.model == "try2":
         model = Try2(
-        dataset.node_features + 2,
+        dataset.node_features + 2 * 3,
         out_classes = dataset.num_classes,
         pred_alpha = 1.1,
         dropout_rate = args.dropout,
