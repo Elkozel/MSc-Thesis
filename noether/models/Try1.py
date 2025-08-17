@@ -277,7 +277,7 @@ class LitFullModel(L.LightningModule):
 
         # Metrics from link prediction
         for name, metric in self.link_pred_metrics.items():
-            metric(link_pred_logits, edge_pred_labels.int())
+            metric(link_pred_probs, edge_pred_labels.int())
 
         # Metrics from link classification
         for name, metric in self.link_class_metrics.items():
@@ -286,7 +286,7 @@ class LitFullModel(L.LightningModule):
         # Metrics from overall malicious event prediction
         malicious_event_mask = (edge_class_labels > 0.5).int()
 
-        for name, metric in self.mal_metrics.items():            
+        for name, metric in self.mal_metrics.items():
             metric((torch.argmax(link_class, dim=1) > 0.5).float(), malicious_event_mask)
 
         # Metrics from only malicious events        
