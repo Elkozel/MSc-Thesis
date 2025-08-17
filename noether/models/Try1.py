@@ -121,6 +121,7 @@ class LitFullModel(L.LightningModule):
             "class_f1": torchmetrics.F1Score(task="multiclass", num_classes=out_classes),
             "class_ap": torchmetrics.AveragePrecision(task="multiclass", num_classes=out_classes)
         })
+        self.link_class_matrix = torchmetrics.ConfusionMatrix(task="multiclass", num_classes=out_classes)
 
         self.mal_metrics = nn.ModuleDict({
             "mal_acc": torchmetrics.Accuracy(task="binary", threshold=binary_threshold),
@@ -177,7 +178,7 @@ class LitFullModel(L.LightningModule):
 
         return link_pred_scores, link_class_logits
     
-    def run_trough_batch(self, data: Batch):
+    def run_trough_batch(self, data: Batch, stage: Literal["train", "val", "test"]):
 
         ### GNN Encoding ###
         gnn_features = self.gnn(data.x, data.edge_index, data.edge_attr)
@@ -277,11 +278,13 @@ class LitFullModel(L.LightningModule):
 
         # Metrics from link prediction
         for name, metric in self.link_pred_metrics.items():
-            metric(link_pred_probs, edge_pred_labels.int())
+            metric(link_pred_probs.squeeze(), edge_pred_labels.int())
 
         # Metrics from link classification
         for name, metric in self.link_class_metrics.items():
             metric(link_class, edge_class_labels.int())
+        if stage == "test":
+            self.link_class_matrix(torch.argmax(link_class, dim=1), edge_class_labels.int())
 
         # Metrics from overall malicious event prediction
         malicious_event_mask = (edge_class_labels > 0.5).int()
@@ -356,7 +359,7 @@ class LitFullModel(L.LightningModule):
             return torch.tensor(0.0, requires_grad=True)
         
         try:
-            results = self.run_trough_batch(batch)
+            results = self.run_trough_batch(batch, "train")
         except NoPositiveEdgesException as e:
             return torch.tensor(0.0, requires_grad=True)
         
@@ -379,7 +382,7 @@ class LitFullModel(L.LightningModule):
             return torch.tensor(0.0, requires_grad=True)
             
         try:
-            results = self.run_trough_batch(batch)
+            results = self.run_trough_batch(batch, "val")
         except NoPositiveEdgesException as e:
             return torch.tensor(0.0, requires_grad=True)
         
@@ -402,7 +405,7 @@ class LitFullModel(L.LightningModule):
             return torch.tensor(0.0, requires_grad=True)
             
         try:
-            results = self.run_trough_batch(batch)
+            results = self.run_trough_batch(batch, "test")
         except NoPositiveEdgesException as e:
             return torch.tensor(0.0, requires_grad=True)
         
@@ -418,6 +421,12 @@ class LitFullModel(L.LightningModule):
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), lr=1e-3)
         return optimizer
+    
+    def on_test_end(self):
+        # Upload the confusion matrix
+        matrix = self.link_class_matrix.compute()
+        self.logger.experiment.log_confusion_matrix(matrix=matrix)
+
     
 
 class NoPositiveEdgesException(Exception):
