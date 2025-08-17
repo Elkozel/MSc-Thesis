@@ -424,7 +424,7 @@ class LitFullModel(L.LightningModule):
     
     def on_test_end(self):
         # Upload the confusion matrix
-        matrix = self.link_class_matrix.compute()
+        matrix = self.link_class_matrix.compute().cpu().numpy()
         self.logger.experiment.log_confusion_matrix(matrix=matrix)
 
     
