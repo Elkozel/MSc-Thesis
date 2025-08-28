@@ -18,7 +18,7 @@ class UWF22(datasets.UWF.UWF22):
                  num_workers: int = 0,
                  batch_split: list = [0.6, 0.25, 0.15], 
                  dataset_name: str = "UWF22",
-                 account_for_duration: bool = True,
+                 account_for_duration: bool = False,
                  shuffle: bool = True,
                  shuffle_type: Literal["random", "day"] = "random",
                  shuffle_every_time: bool = False):
